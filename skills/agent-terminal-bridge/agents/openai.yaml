@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Terminal Bridge"
+  short_description: "Operate an authorized shared terminal through Bridge"
+  default_prompt: "Use $agent-terminal-bridge to operate the shared terminal after I finish logging in."

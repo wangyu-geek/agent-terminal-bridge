@@ -55,7 +55,7 @@ export class Executor {
           profile: "bash-v1",
           code: shellInitialization(nonce),
           instructions:
-            "Review and paste this code only into the selected Bash >=4 prompt; then confirm the expected hostname.",
+            "Review and paste this code only into the selected Bash >=3.2 prompt; then confirm the expected hostname. The ready command performs automatic preparation after explicit handoff.",
         }
       },
     )
@@ -116,6 +116,7 @@ export class Executor {
           endpoint: probe.host,
           user: probe.user,
           cwd: probe.cwd,
+          version: probe.bashVersion,
         }
         await this.sessions.state.save(binding)
         return {
@@ -191,6 +192,32 @@ export class Executor {
         "unknown",
       )
     }
+  }
+
+  // The preparation coordinator holds the resource lock for installation,
+  // this probe and the final ownership commit.
+  async probeLocked(binding: Binding, timeout: number, expectedHost?: string) {
+    const transaction = await this.transaction(
+      binding,
+      `probe-${randomNonce()}`,
+      "probe",
+      expectedHost ?? "",
+      timeout,
+    )
+    const probe = transaction.parser?.probe
+    requireValue(
+      transaction.result.ok && probe,
+      "SHELL_CONFIRMATION_REQUIRED",
+      "Shell handshake failed; take over, inspect the terminal and resume",
+      9,
+    )
+    requireValue(
+      expectedHost === undefined || probe.host === expectedHost,
+      "ENDPOINT_MISMATCH",
+      "Reported hostname does not match the explicitly requested destination",
+      5,
+    )
+    return probe
   }
 
   async query(name: string, id: string) {
@@ -357,6 +384,8 @@ export class Executor {
   ) {
     const start = performance.now()
     const deadline = start + timeout * 1000
+    const preparing =
+      binding.preparation !== null && binding.preparation.phase !== "completed"
     requireValue(
       binding.shell.nonce && /^[a-f0-9]{32}$/.test(binding.shell.nonce),
       "SHELL_CONFIRMATION_REQUIRED",
@@ -389,7 +418,7 @@ export class Executor {
       "exec requires a dedicated single-pane session",
       3,
     )
-    await this.checkClients(binding, kind)
+    await this.checkClients(binding, kind, preparing)
     const nonce = randomNonce()
     const line = `__atb_${binding.shell.nonce} ${kind} ${nonce}${kind === "run" ? ` ${Buffer.from(input).toString("base64")}` : ""}`
     requireValue(
@@ -488,7 +517,7 @@ export class Executor {
         }
         if (performance.now() >= nextInspection) {
           await this.sessions.verify(binding, true)
-          await this.checkClients(binding, kind)
+          await this.checkClients(binding, kind, preparing)
           nextInspection = performance.now() + 200
         }
         await Bun.sleep(20)
@@ -511,8 +540,8 @@ export class Executor {
       task.reason = parser.rejected
       if (parser.rejected) {
         binding.shell = emptyShell("unknown")
-        binding.control = "human"
-        await this.sessions.restoreClients(binding)
+        binding.control = preparing ? "recovery_required" : "human"
+        if (!preparing) await this.sessions.restoreClients(binding)
         await this.sessions.state.save(binding)
       }
       task.durationMs = Math.round(performance.now() - start)
@@ -552,7 +581,7 @@ export class Executor {
       task.updatedAt = new Date().toISOString()
       binding.shell = emptyShell("unknown")
       binding.control =
-        sent && failure.code !== "MANUAL_TAKEOVER"
+        (preparing || sent) && failure.code !== "MANUAL_TAKEOVER"
           ? "recovery_required"
           : "human"
       if (failure.code === "MANUAL_TAKEOVER")
@@ -586,17 +615,13 @@ export class Executor {
     }
   }
 
-  private async checkClients(binding: Binding, kind: "run" | "probe") {
-    if (kind === "probe") return
-    const clients = await new Tmux(binding.socketPath).clients(
-      binding.sessionId,
-    )
-    requireValue(
-      !clients.some((client) => !client.control && !client.readonly),
-      "RECOVERY_REQUIRED",
-      "A writable human client conflicts with Agent execution",
-      9,
-    )
+  private async checkClients(
+    binding: Binding,
+    kind: "run" | "probe",
+    preparing = false,
+  ) {
+    if (kind === "probe" && !preparing) return
+    await this.sessions.requireReadonly(binding)
   }
 }
 
@@ -609,6 +634,7 @@ export function taskResult(binding: Binding, task: Task) {
   return {
     ok,
     session: binding.alias,
+    session_id: binding.id,
     request_id: task.id,
     execution_state: task.state,
     completed,

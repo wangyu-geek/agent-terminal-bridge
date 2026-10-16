@@ -9,6 +9,26 @@ export interface ShellBinding {
   endpoint: string | null
   user: string | null
   cwd: string | null
+  version: string | null
+}
+
+export const PREPARATION_PHASES = [
+  "freezing",
+  "transferring",
+  "handshaking",
+  "completed",
+  "failed",
+] as const
+export type PreparationPhase = (typeof PREPARATION_PHASES)[number]
+export interface Preparation {
+  id: string
+  generation: string
+  phase: PreparationPhase
+  inputStarted: boolean
+  ownerPid: number
+  ownerProcess: string
+  reason: string | null
+  startedAt: string
 }
 
 export interface Binding {
@@ -32,6 +52,8 @@ export interface Binding {
   shell: ShellBinding
   clientFlags: Record<string, boolean>
   createdAt: string
+  preparation: Preparation | null
+  sshAlias: string | null
 }
 
 export interface Pane {
@@ -65,5 +87,12 @@ export interface Config {
 }
 
 export function emptyShell(state: ShellState = "uninitialized"): ShellBinding {
-  return { state, nonce: null, endpoint: null, user: null, cwd: null }
+  return {
+    state,
+    nonce: null,
+    endpoint: null,
+    user: null,
+    cwd: null,
+    version: null,
+  }
 }

@@ -74,7 +74,7 @@ export class Fixture {
   }
   async bashSession() {
     const bash = await compatibleBash()
-    if (!bash) throw new Error("Bash >=4 is required for this fixture")
+    if (!bash) throw new Error("Bash >=3.2 is required for this fixture")
     const external = await this.external([bash, "--noprofile", "--norc"])
     const bound = await this.cli([
       "bind",
@@ -205,20 +205,33 @@ export class Fixture {
 }
 
 export async function compatibleBash(): Promise<string | null> {
-  for (const path of [
-    Bun.which("bash"),
-    "/opt/homebrew/bin/bash",
-    "/usr/local/bin/bash",
-    "/usr/bin/bash",
-    "/bin/bash",
-  ]) {
+  const override = process.env.ATB_TEST_BASH
+  if (override && !(await Bun.file(override).exists()))
+    throw new Error("ATB_TEST_BASH does not exist")
+  for (const path of override
+    ? [override]
+    : [
+        Bun.which("bash"),
+        "/opt/homebrew/bin/bash",
+        "/usr/local/bin/bash",
+        "/usr/bin/bash",
+        "/bin/bash",
+      ]) {
     if (!path) continue
     if (!(await Bun.file(path).exists())) continue
     const child = Bun.spawn(
-      [path, "--noprofile", "--norc", "-c", "(( BASH_VERSINFO[0] >= 4 ))"],
+      [
+        path,
+        "--noprofile",
+        "--norc",
+        "-c",
+        "(( BASH_VERSINFO[0] > 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] >= 2) ))",
+      ],
       { stdout: "ignore", stderr: "ignore" },
     )
     if ((await child.exited) === 0) return path
+    if (override)
+      throw new Error("ATB_TEST_BASH must select a runnable Bash >=3.2")
   }
   return null
 }

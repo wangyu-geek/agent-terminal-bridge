@@ -20,7 +20,8 @@
     "CONTRIBUTING.md",
     "SECURITY.md",
     "docs",
-    "examples"
+    "examples",
+    "skills"
   ],
   "scripts": {
     "dev": "bun --no-env-file run src/cli.ts",

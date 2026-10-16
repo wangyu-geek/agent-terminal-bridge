@@ -114,6 +114,7 @@ export interface ProbeResult {
   user: string
   cwd: string
   bashMajor: number
+  bashVersion: string | null
 }
 
 export class FrameParser {
@@ -129,7 +130,7 @@ export class FrameParser {
   constructor(
     readonly bindingNonce: string,
     readonly requestNonce: string,
-    readonly kind: "run" | "probe",
+    readonly kind: "run" | "probe" | "install",
     maxOutput: number,
   ) {
     this.output = new TerminalRenderer(maxOutput)
@@ -195,6 +196,12 @@ export class FrameParser {
           "Duplicate execution completion frame",
         )
       const type = frame[3]
+      if (this.kind === "install" && type === "ACK" && frame.length === 4) {
+        this.ended = true
+        this.completedAt = performance.now()
+        this.exitCode = 0
+        continue
+      }
       if (
         type === "REJECT" &&
         !this.began &&
@@ -204,18 +211,40 @@ export class FrameParser {
         this.rejected = frame[4] ?? "REJECTED"
         continue
       }
-      if (this.kind === "probe" && type === "PROBE" && frame.length === 8) {
+      if (
+        this.kind === "probe" &&
+        type === "PROBE" &&
+        [8, 9].includes(frame.length)
+      ) {
         const major = Number(frame[7])
-        if (!Number.isInteger(major) || major < 4)
+        if (!Number.isInteger(major) || major < 3)
           throw new BridgeError(
             "PROTOCOL_ERROR",
             "Unsupported shell profile response",
+          )
+        const version = frame[8] ?? null
+        if (version !== null) {
+          const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+          if (
+            !parts ||
+            Number(parts[1]) !== major ||
+            (major === 3 && Number(parts[2]) < 2)
+          )
+            throw new BridgeError(
+              "PROTOCOL_ERROR",
+              "Unsupported or inconsistent Bash version",
+            )
+        } else if (major === 3)
+          throw new BridgeError(
+            "PROTOCOL_ERROR",
+            "Bash 3 requires a verified minor version",
           )
         this.probe = {
           host: decodeField(frame[4] ?? "", 255),
           user: decodeField(frame[5] ?? "", 128),
           cwd: decodeField(frame[6] ?? "", 4096),
           bashMajor: major,
+          bashVersion: version,
         }
         this.ended = true
         this.completedAt = performance.now()

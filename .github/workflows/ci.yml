@@ -10,7 +10,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest]
+        include:
+          - os: ubuntu-22.04
+            bash: system
+          - os: ubuntu-22.04
+            bash: '4.4.18'
+          - os: macos-latest
+            bash: system
+          - os: macos-latest
+            bash: homebrew
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -21,10 +29,31 @@ jobs:
           bun-version: 1.4.2
       - name: Install Linux integration dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y tmux bash
+        run: sudo apt-get update && sudo apt-get install -y tmux bash build-essential curl ca-certificates
       - name: Install macOS integration dependencies
         if: runner.os == 'macOS'
         run: brew install tmux bash
+      - name: Select the target Bash for the full test suite
+        shell: bash
+        env:
+          ATB_MATRIX_BASH: ${{ matrix.bash }}
+        run: |
+          set -euo pipefail
+          case "$ATB_MATRIX_BASH" in
+            system) printf 'ATB_TEST_BASH=/bin/bash\n' >> "$GITHUB_ENV" ;;
+            homebrew) printf 'ATB_TEST_BASH=%s/bin/bash\n' "$(brew --prefix bash)" >> "$GITHUB_ENV" ;;
+            4.4.18)
+              atb_build_dir="$RUNNER_TEMP/atb-bash44"
+              mkdir -p "$atb_build_dir"
+              curl --fail --location --retry 2 -o "$atb_build_dir/bash.tar.gz" https://ftp.gnu.org/gnu/bash/bash-4.4.18.tar.gz
+              printf '604d9eec5e4ed5fd2180ee44dd756ddca92e0b6aa4217bbab2b6227380317f23  %s/bash.tar.gz\n' "$atb_build_dir" | sha256sum -c -
+              tar -xzf "$atb_build_dir/bash.tar.gz" -C "$atb_build_dir"
+              cd "$atb_build_dir/bash-4.4.18"
+              ./configure --without-bash-malloc --disable-nls CFLAGS=-std=gnu89
+              make -j2
+              printf 'ATB_TEST_BASH=%s/bash-4.4.18/bash\n' "$atb_build_dir" >> "$GITHUB_ENV"
+              ;;
+          esac
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Require integration dependencies
         run: bun --no-env-file -e 'import { compatibleBash } from "./tests/helpers.ts"; if (!Bun.which("tmux") || !(await compatibleBash())) throw new Error("Missing integration dependencies")'

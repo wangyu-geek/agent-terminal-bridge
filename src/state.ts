@@ -2,7 +2,7 @@ import { appendFile, readdir, rename, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
 import { digest, withLock } from "./locking.ts"
-import { type Binding, OPERATIONS } from "./models.ts"
+import { type Binding, OPERATIONS, PREPARATION_PHASES } from "./models.ts"
 import {
   checkExistingFile,
   privatePathError,
@@ -22,6 +22,7 @@ import {
 } from "./validate.ts"
 
 export class State {
+  private selection: { alias: string; id: string } | null = null
   readonly locks: string
   readonly bindings: string
   readonly requests: string
@@ -50,6 +51,14 @@ export class State {
         "STATE_ERROR",
         "Binding alias does not match its record",
         8,
+      )
+      requireValue(
+        this.selection === null ||
+          this.selection.alias !== name ||
+          this.selection.id === binding.id,
+        "BINDING_CHANGED",
+        "The selected session_id was replaced; select a session again",
+        4,
       )
       return binding
     } catch (error) {
@@ -97,6 +106,52 @@ export class State {
         )
       throw privatePathError(error)
     }
+  }
+  async select(id?: string, name?: string): Promise<string> {
+    requireValue(
+      !(id !== undefined && name !== undefined),
+      "INVALID_INPUT",
+      "Use either --session-id or --session, not both",
+    )
+    if (name !== undefined) {
+      const binding = await this.load(alias(name))
+      this.selection = { alias: binding.alias, id: binding.id }
+      return name
+    }
+    const bindings = await this.list()
+    if (id !== undefined) {
+      requireValue(
+        /^[a-f0-9]{32}$/.test(id),
+        "INVALID_INPUT",
+        "session_id must be the complete 32-character Bridge ID",
+      )
+      const matches = bindings.filter((binding) => binding.id === id)
+      const selected = matches[0]
+      requireValue(
+        matches.length === 1 && selected,
+        "INVALID_BINDING",
+        "session_id is missing or no longer registered; inspect list",
+        4,
+      )
+      this.selection = { alias: selected.alias, id: selected.id }
+      return selected.alias
+    }
+    requireValue(
+      bindings.length > 0,
+      "INVALID_BINDING",
+      "No shared session exists; run remote-terminal connect SSH_ALIAS in a real terminal",
+      4,
+    )
+    requireValue(
+      bindings.length === 1,
+      "SESSION_SELECTION_REQUIRED",
+      "Multiple sessions exist; select a session_id from remote-terminal list",
+      5,
+    )
+    const selected = bindings[0]
+    requireValue(selected, "INVALID_BINDING", "No shared session exists", 4)
+    this.selection = { alias: selected.alias, id: selected.id }
+    return selected.alias
   }
   async audit(
     operation: string,
@@ -170,6 +225,8 @@ export function parseBinding(value: unknown): Binding {
       "shell",
       "clientFlags",
       "createdAt",
+      "preparation",
+      "sshAlias",
     ],
     "binding",
   )
@@ -180,7 +237,11 @@ export function parseBinding(value: unknown): Binding {
     8,
   )
   const shell = object(data.shell, "shell binding")
-  keys(shell, ["state", "nonce", "endpoint", "user", "cwd"], "shell binding")
+  keys(
+    shell,
+    ["state", "nonce", "endpoint", "user", "cwd", "version"],
+    "shell binding",
+  )
   const clients = object(data.clientFlags, "client flags")
   const flags: Record<string, boolean> = {}
   for (const [key, val] of Object.entries(clients))
@@ -221,9 +282,51 @@ export function parseBinding(value: unknown): Binding {
       endpoint: nullable(shell.endpoint, "endpoint"),
       user: nullable(shell.user, "user"),
       cwd: nullable(shell.cwd, "cwd"),
+      version:
+        shell.version === undefined
+          ? null
+          : nullable(shell.version, "shell version"),
     },
     clientFlags: flags,
     createdAt: string(data.createdAt, "creation time", 64),
+    preparation: null,
+    sshAlias:
+      data.sshAlias === undefined || data.sshAlias === null
+        ? null
+        : string(data.sshAlias, "SSH entry alias", 128),
+  }
+  if (data.preparation !== undefined && data.preparation !== null) {
+    const preparation = object(data.preparation, "preparation")
+    keys(
+      preparation,
+      [
+        "id",
+        "generation",
+        "phase",
+        "inputStarted",
+        "ownerPid",
+        "ownerProcess",
+        "reason",
+        "startedAt",
+      ],
+      "preparation",
+    )
+    result.preparation = {
+      id: string(preparation.id, "preparation ID", 128),
+      generation: string(preparation.generation, "preparation generation", 128),
+      phase: choice(preparation.phase, PREPARATION_PHASES, "preparation phase"),
+      inputStarted: boolean(preparation.inputStarted, "preparation input"),
+      ownerPid: integer(preparation.ownerPid, "preparation owner PID", 1),
+      ownerProcess: string(
+        preparation.ownerProcess,
+        "preparation owner process",
+      ),
+      reason:
+        preparation.reason === null
+          ? null
+          : string(preparation.reason, "preparation reason", 64),
+      startedAt: string(preparation.startedAt, "preparation start", 64),
+    }
   }
   requireValue(
     /^\$\d+$/.test(result.sessionId) &&

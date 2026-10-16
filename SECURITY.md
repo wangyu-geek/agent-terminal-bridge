@@ -4,7 +4,7 @@ Bridge is a local tool for a trusted user and cooperating Agents. Its bindings, 
 
 External tmux configurations and hooks are trusted inputs. Managed sessions use a separate socket and controlled configuration; an external server's hooks remain the operator's responsibility.
 
-A random shell function name ties automatic calls to a user-initialized shell. Missing helpers never fall back to executing the payload. Handshake metadata is shell-reported and user-confirmed; it is not cryptographic server identity. The existing SSH/bastion authentication and audit remain authoritative.
+A random non-exported shell function ties automatic calls to the explicitly handed-over shell. ready freezes human clients and installs it only after the human confirms login/target selection and an idle shell; legacy manual installation also remains available. Missing helpers never fall back to executing a command payload. session_id selects the local binding and is not an authorization token or remote machine identity. Hostname/user/cwd are shell-reported; ready does not require an independent expected hostname unless explicitly requested. The existing SSH/bastion authentication and audit remain authoritative.
 
 Commands are arbitrary user-authorized Bash programs, not sandboxed code. A command blacklist cannot define permission to execute them. The host Agent must preserve user authorization, especially for deletion, service restarts and privilege changes.
 

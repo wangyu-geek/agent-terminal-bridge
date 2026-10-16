@@ -64,11 +64,29 @@ test("probe and rejection frames have distinct semantics", () => {
     user: "user",
     cwd: "/tmp",
     bashMajor: 5,
+    bashVersion: null,
   })
   const rejected = new FrameParser(binding, request, "run", 100)
   rejected.feed(frame("REJECT|BAD_PAYLOAD"))
   expect(rejected.completed).toBe(false)
   expect(rejected.rejected).toBe("BAD_PAYLOAD")
+})
+
+test("versioned probes accept Bash 3.2 and reject inconsistent or older reports", () => {
+  const metadata = ["host", "user", "/tmp"]
+    .map((value) => Buffer.from(value).toString("base64"))
+    .join("|")
+  const compatible = new FrameParser(binding, request, "probe", 100)
+  compatible.feed(frame(`PROBE|${metadata}|3|3.2.57`))
+  expect(compatible.probe?.bashVersion).toBe("3.2.57")
+  for (const report of ["3|3.1.0", "3", "4|3.2.57", "3|not-a-version"]) {
+    const parser = new FrameParser(binding, request, "probe", 100)
+    expect(() => parser.feed(frame(`PROBE|${metadata}|${report}`))).toThrow()
+  }
+  const install = new FrameParser(binding, request, "install", 64)
+  install.feed(frame("ACK"))
+  expect(install.completed).toBe(true)
+  expect(() => install.feed(frame("ACK"))).toThrow()
 })
 
 test("tmux octal decoding preserves arbitrary raw bytes without UTF-8 conversion", () => {

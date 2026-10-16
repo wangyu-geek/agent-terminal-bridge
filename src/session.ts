@@ -3,7 +3,12 @@ import { join } from "node:path"
 import { effectivePermissions } from "./config.ts"
 import { BridgeError, requireValue } from "./errors.ts"
 import { processIdentity } from "./identity.ts"
-import { digest, recoverDirectoryLock, withLock } from "./locking.ts"
+import {
+  digest,
+  inspectDirectoryLock,
+  recoverDirectoryLock,
+  withLock,
+} from "./locking.ts"
 import {
   type Binding,
   type Config,
@@ -18,7 +23,7 @@ import {
   validateRawInput,
 } from "./security.ts"
 import { resourceKey, type State } from "./state.ts"
-import { Tasks } from "./tasks.ts"
+import { isPending, Tasks } from "./tasks.ts"
 import {
   canonicalSocket,
   checkTmux,
@@ -37,7 +42,7 @@ export class Sessions {
     this.tasks = new Tasks(state)
   }
 
-  async start(name: string, ssh?: string): Promise<Binding> {
+  async start(name: string, ssh?: string, fresh = false): Promise<Binding> {
     await checkTmux(this.config.minimumTmux)
     if (ssh)
       requireValue(
@@ -50,6 +55,12 @@ export class Sessions {
         (binding) => binding.alias === name,
       )
       if (existing) {
+        requireValue(
+          !fresh,
+          "SESSION_CONFLICT",
+          "Session name is already registered; select it explicitly or choose a new --session name",
+          4,
+        )
         await this.verify(existing)
         return existing
       }
@@ -95,12 +106,14 @@ export class Sessions {
         8,
       )
       try {
-        return await this.register(name, socket, paneId, "managed", [
-          "read",
-          "exec",
-          "raw_send",
-          "stop",
-        ])
+        return await this.register(
+          name,
+          socket,
+          paneId,
+          "managed",
+          ["read", "exec", "raw_send", "stop"],
+          ssh,
+        )
       } catch (error) {
         await tmux
           .run(["kill-session", "-t", `=${sessionName}`])
@@ -145,6 +158,7 @@ export class Sessions {
     paneId: string,
     ownership: "managed" | "external",
     granted: Operation[],
+    sshAlias?: string,
   ): Promise<Binding> {
     const tmux = new Tmux(socket)
     const serverInstance = await tmux.serverInstance()
@@ -191,6 +205,8 @@ export class Sessions {
       shell: emptyShell(),
       clientFlags: {},
       createdAt: new Date().toISOString(),
+      preparation: null,
+      sshAlias: sshAlias ?? null,
     }
     await tmux.run([
       "set-option",
@@ -210,6 +226,32 @@ export class Sessions {
     }
     await this.state.audit("bind", binding.id, "registered")
     return binding
+  }
+
+  async freezeClients(binding: Binding): Promise<void> {
+    const tmux = new Tmux(binding.socketPath)
+    const clients = await tmux.clients(binding.sessionId)
+    for (const client of clients.filter((item) => !item.control))
+      if (!(client.key in binding.clientFlags))
+        binding.clientFlags[client.key] = client.readonly
+    await this.state.save(binding)
+    for (const client of clients.filter(
+      (item) => !item.control && !item.readonly,
+    ))
+      await tmux.setReadonly(client.name, true, binding.sessionId)
+    await this.requireReadonly(binding)
+  }
+
+  async requireReadonly(binding: Binding): Promise<void> {
+    const clients = await new Tmux(binding.socketPath).clients(
+      binding.sessionId,
+    )
+    requireValue(
+      !clients.some((client) => !client.control && !client.readonly),
+      "RECOVERY_REQUIRED",
+      "A writable human client conflicts with Agent preparation or execution",
+      9,
+    )
   }
 
   async verify(binding: Binding, write = false): Promise<Pane> {
@@ -286,10 +328,103 @@ export class Sessions {
     const active = await this.tasks.active(binding)
     const task = active ? await this.tasks.observe(active) : null
     const uncertain = task?.state === "unknown"
+    const preparation = binding.preparation
+    let preparationAlive = false
+    if (preparation && !["completed", "failed"].includes(preparation.phase)) {
+      try {
+        preparationAlive =
+          (await processIdentity(preparation.ownerPid)) ===
+          preparation.ownerProcess
+      } catch {
+        /* Read-only status keeps a failed owner uncertain. */
+      }
+    }
+    const lock = await inspectDirectoryLock(
+      this.state.locks,
+      resourceKey(binding),
+    )
+    const recent = await this.tasks.recent(binding)
+    const displayState =
+      uncertain ||
+      (preparation?.phase === "failed" &&
+        (preparation.inputStarted || binding.control !== "human")) ||
+      (preparation &&
+        !["completed", "failed"].includes(preparation.phase) &&
+        !preparationAlive) ||
+      lock === "dead" ||
+      lock === "unknown" ||
+      binding.control === "recovery_required"
+        ? preparationAlive
+          ? "preparing"
+          : "needs_human"
+        : preparationAlive
+          ? "preparing"
+          : task && isPending(task)
+            ? "running"
+            : binding.control === "agent" && binding.shell.state === "confirmed"
+              ? "ready"
+              : "awaiting_human"
+    const nextAction = {
+      action:
+        displayState === "ready"
+          ? "exec"
+          : displayState === "awaiting_human"
+            ? "confirm_ready"
+            : displayState === "needs_human"
+              ? binding.control === "human"
+                ? "confirm_resume"
+                : "takeover"
+              : "wait",
+      session_id: binding.id,
+      requires_confirmation: ["awaiting_human", "needs_human"].includes(
+        displayState,
+      ),
+      message:
+        displayState === "ready"
+          ? "Execute the user-authorized task."
+          : displayState === "awaiting_human"
+            ? "Finish login and target selection, then tell your Agent the shell is ready."
+            : displayState === "needs_human"
+              ? binding.control === "human"
+                ? "Inspect and resolve the terminal state, then confirm resume."
+                : "Take over, inspect and resolve the terminal state, then resume."
+              : "Wait for this operation or explicitly request takeover.",
+    }
+    const details = {
+      session_id: binding.id,
+      ssh_entry: binding.sshAlias,
+      preparation: preparation
+        ? {
+            operation_id: preparation.id,
+            phase: preparation.phase,
+            input_started: preparation.inputStarted,
+            coordinator_alive: preparationAlive,
+            reason: preparation.reason,
+          }
+        : null,
+      local_lock: lock,
+      recent_requests: recent.map((item) => ({
+        request_id: item.id,
+        execution_state: item.state,
+        exit_code: item.exitCode,
+        created_at: item.createdAt,
+      })),
+    }
     try {
       const pane = await this.verify(binding)
       return {
         session: name,
+        ...details,
+        display_state: pane.dead ? "connection_ended" : displayState,
+        next_action: pane.dead
+          ? {
+              action: "reconnect",
+              session_id: binding.id,
+              requires_confirmation: true,
+              message:
+                "The local connection process exited. Resolve unknown requests, then explicitly create a new connection.",
+            }
+          : nextAction,
         binding: "valid",
         pane: {
           id: pane.paneId,
@@ -304,6 +439,13 @@ export class Sessions {
               : null,
           endpoint_label:
             pane.dead || uncertain ? null : binding.shell.endpoint,
+          endpoint_source:
+            pane.dead || uncertain || binding.shell.endpoint === null
+              ? null
+              : "shell_reported",
+          user: pane.dead || uncertain ? null : binding.shell.user,
+          cwd: pane.dead || uncertain ? null : binding.shell.cwd,
+          bash_version: pane.dead || uncertain ? null : binding.shell.version,
         },
         control: binding.control,
         task: { state: task?.state ?? "idle", request_id: task?.id ?? null },
@@ -321,12 +463,95 @@ export class Sessions {
         throw error
       return {
         session: name,
+        ...details,
+        display_state: "connection_ended",
+        next_action: {
+          action: "reconnect",
+          session_id: binding.id,
+          requires_confirmation: true,
+          message:
+            "Resolve any unknown request, then explicitly create a new connection.",
+        },
         binding: "stale",
         pane: { id: binding.paneId, state: "missing", pid: null },
-        shell: { state: "unknown", profile: null, endpoint_label: null },
+        shell: {
+          state: "unknown",
+          profile: null,
+          endpoint_label: null,
+          bash_version: null,
+        },
         control: "recovery_required",
         task: { state: task?.state ?? "unknown", request_id: task?.id ?? null },
         permissions: [],
+      }
+    }
+  }
+
+  async showSessionId(binding: Binding): Promise<void> {
+    if (binding.ownership !== "managed") return
+    await this.verify(binding)
+    const tmux = new Tmux(binding.socketPath)
+    for (const [option, value] of [
+      ["status", "on"],
+      ["status-left-length", "120"],
+      ["status-right-length", "0"],
+      [
+        "status-left",
+        `Bridge | ${binding.alias} | session_id=${binding.id} | Login, then hand over in Agent chat`,
+      ],
+      ["status-right", ""],
+      ["status-justify", "left"],
+    ] as const)
+      await tmux.run(["set-option", "-t", binding.sessionId, option, value])
+  }
+
+  async attach(name: string, writable: boolean) {
+    const original = await this.state.load(name)
+    let child: ReturnType<Tmux["attach"]> | undefined
+    try {
+      await withLock(this.state.locks, resourceKey(original), async () => {
+        const binding = await this.state.load(name)
+        this.requirePermission(binding, "read")
+        await this.verify(binding)
+        requireValue(
+          !writable || binding.control === "human",
+          "PERMISSION_DENIED",
+          "Take over before attaching with input permission",
+          5,
+        )
+        const tmux = new Tmux(binding.socketPath)
+        const proc = tmux.attach(binding.sessionId)
+        child = proc
+        const deadline = performance.now() + 5000
+        while (performance.now() < deadline) {
+          if (proc.exitCode !== null) return
+          const client = (await tmux.clients(binding.sessionId)).find(
+            (item) => item.pid === proc.pid,
+          )
+          if (client) {
+            if (writable)
+              await tmux.setReadonly(client.name, false, binding.sessionId)
+            return
+          }
+          await Bun.sleep(10)
+        }
+        throw new BridgeError(
+          "TIMEOUT",
+          "Terminal client did not attach before its deadline",
+          7,
+        )
+      })
+      requireValue(
+        child,
+        "LOCAL_IO_ERROR",
+        "Terminal client was not created",
+        8,
+      )
+      return await child.exited
+    } finally {
+      if (child && child.exitCode === null) {
+        child.kill("SIGTERM")
+        await child.exited
       }
     }
   }

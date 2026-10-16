@@ -1,164 +1,106 @@
 # Agent Terminal Bridge
 
-An agent-neutral CLI for sharing an explicitly authorized tmux terminal with a human. It returns text or versioned JSON and requires no screen capture, multimodal model, Agent SDK, HTTP service, or remote daemon.
+An agent-neutral CLI for sharing a terminal you have logged into with an Agent. Text/JSON only: no screenshots, multimodal model, Agent SDK, remote daemon or remote Bun installation.
 
-Implemented in TypeScript with Bun 1.4.2. The current implementation includes managed/external pane binding, bounded snapshots, explicit raw input, Bash command execution, durable request records, interruption, human handoff, and recovery. [Solution.md](Solution.md) describes the contracts; [compatibility](docs/compatibility.md) records what has actually been tested.
+**Normal flow: one connection command → manual login → one handoff message.** A shared session has a `session_id`; each command has a separate `request_id`. You do not need to provide a hostname.
 
-## Install and build
+## Install
 
-Development requires Bun 1.4.2 and tmux >=3.2. The execution profile requires Bash >=4 and `base64` on the **target shell**. On macOS the system Bash is too old for this profile; a separately installed compatible Bash can be used for local testing. Ordinary SSH access and interactive bastion authentication remain manual.
+Use the standalone executable for your verified platform. It includes Bun; **local tmux >=3.2 and OpenSSH** are still required. The target shell needs **Bash >=3.2, base64 and tr**. These are target requirements, not a request to upgrade your local Bash.
 
-```bash
-bun install --frozen-lockfile
-bun run check
-bun run test
-bun run build
-bun run build:bin
-```
-
-- `dist/cli.js` is a Bun bundle. Run it with `bun --no-env-file --config=/dev/null dist/cli.js ...`; a package installation exposes `remote-terminal` and still requires Bun.
-- `dist/remote-terminal` is a standalone executable containing its Bun runtime. It still needs local tmux and, when connecting over SSH, OpenSSH.
-- Cross-compilation: `bun run build:bin --target=bun-linux-x64`. Other planned targets are `bun-linux-arm64`, `bun-darwin-arm64`, and `bun-darwin-x64`; a successful cross-build is not a target-platform test.
-
-The commands below use `remote-terminal` for an installed package or a standalone executable placed on PATH. From a checkout, substitute `bun run dev --`.
-
-## Share a shell
-
-Create a dedicated local session, then attach in a real terminal:
+This checkout does not claim a published binary release. A locally built macOS arm64 executable is produced at `dist/remote-terminal`; see [build instructions](CONTRIBUTING.md) and [validation status](docs/compatibility.md). To install an already built executable:
 
 ```bash
-remote-terminal start --session remote
-remote-terminal attach --session remote --writable
+mkdir -p "$HOME/.local/bin"
+install -m 755 dist/remote-terminal "$HOME/.local/bin/remote-terminal"
 ```
 
-A new session is under human control. Complete SSH authentication, MFA and the bastion menu yourself. When appropriate, run `exec ssh -tt bastion` in the pane, replacing `bastion` with your SSH configuration alias. Using `exec` avoids leaving the original local shell behind when SSH exits. `start --ssh bastion` is also available when explicitly requested.
+Add `~/.local/bin` to your PATH using your shell's usual configuration. A package installation instead uses `dist/cli.js` and requires Bun >=1.4.2.
 
-An SSH connection must already be inside tmux or be established there. This tool cannot adopt a running SSH process from an ordinary terminal tab. tmux preserves the local terminal, not the remote connection across network failure.
+Copy the entire [skill directory](skills/agent-terminal-bridge/SKILL.md), including its references, into the skills directory configured by your Agent host, then enable/reload it and verify it is listed. CLI installation alone does not register the skill. Hosts without skills can use [the AGENTS.md routing example](examples/AGENTS.md). [Integration details](docs/agent-integration.md).
 
-Inspect the shared pane from another terminal or an Agent:
+No Bridge config file is required for the default single-session flow.
+
+## Connect, log in and hand over
+
+In your real local terminal, replace `bastion` with an existing SSH configuration alias:
 
 ```bash
-remote-terminal status --session remote --json
-remote-terminal capture --session remote --lines 200 --json
+remote-terminal connect bastion
 ```
 
-A snapshot is terminal text, not a structured command result. A live pane alone never proves a remote connection or hostname.
+Complete passwords, MFA and server selection yourself. The local Bridge status bar shows the full session_id throughout login; it does not identify or authenticate the remote machine.
 
-Snapshots default to the main screen; `--screen alternate` selects an active alternate screen. `--screen mode` selects a tmux copy-mode screen only when the backend provides `capture-pane -M`; `doctor` reports this optional capability (tmux 3.2 lacks it). Unsupported selection returns exit 3 instead of reading a different buffer.
+When the selected server's shell is idle and ready, tell your Agent:
 
-## Enable non-interactive execution
+> 登录好了，可以接管，用共享终端帮我检查磁盘。
 
-1. In the target pane, reach an empty prompt in Bash >=4.
-2. From another local terminal, generate initialization code:
+The skill reads the single authorized session, calls ready, and executes the requested task. You do not copy initialization code, open a second terminal or type a hostname. With several sessions, provide the session_id from the status bar or choose from the Agent's list.
 
-   ```bash
-   remote-terminal shell-init --session remote
-   ```
+Watch Agent output in the same terminal. Agent ownership makes your previously writable client read-only.
 
-3. Review and paste that generated code into the **chosen target shell**. Use the terminal's normal bracketed-paste support. Initialization defines a temporary, non-exported function in that shell; the CLI does not send it automatically or install remote files.
-4. Confirm the target's actual reported hostname, then hand over control:
-
-   ```bash
-   # Replace web-01 with the hostname you verified in the selected shell.
-   remote-terminal confirm-shell --session remote --expected-host web-01 --confirm --json
-   remote-terminal handoff --session remote --to agent --confirm --json
-   remote-terminal exec --session remote --request-id inspect-disk-001 --timeout 30 --json 'df -h'
-   ```
-
-Existing human clients become read-only while the Agent owns execution. `attach` is read-only by default. The host Agent remains responsible for user authorization of the actual command; `--confirm` acknowledges a management action and is not an authentication token.
-
-Commands run in a separate non-interactive Bash with stdin connected to `/dev/null`. They inherit the current directory and exported environment, but `cd` and `export` do not persist into the interactive shell. Use `cd /path && command` within a request. Editors, pagers, password prompts, `/dev/tty` input, background jobs and detached processes are outside the reliable execution profile.
-
-The result reports `terminal_output`, which combines the shared PTY streams and may include asynchronous noise. It does not claim isolated stdout/stderr. Output can be truncated while completion and the exit code are still detected. The default output limit is 1 MiB; scripts are limited to 2048 UTF-8 bytes and encoded input lines to 4096 bytes.
-
-For a short script without local shell expansion:
+To return to an existing session later:
 
 ```bash
-printf '%s\n' 'pwd' 'df -h' | remote-terminal exec --command-stdin --request-id inspect-002 --json
-remote-terminal request --request-id inspect-002 --json
+remote-terminal connect
 ```
 
-A repeated request ID never sends the command again. A different command with the same ID is rejected. Only metadata is durable: later queries can confirm completion without recovering the old terminal output.
+Multiple sessions produce a selection prompt. A new connection with an occupied name asks whether to reuse that exact session or choose a new name. Closing an observing client does not close SSH. An existing Agent-controlled session opens read-only.
 
-## Handoff, interrupt and recover
+The SSH connection must originate in the Bridge/tmux pane. An SSH process already running in an ordinary terminal cannot be adopted. tmux preserves the local terminal, not a remote connection across network failure.
 
-When idle, explicitly return control to a human:
+## Take back control and continue
+
+Tell your Agent “把这个会话交回我”. The takeover coordinator waits for actual ownership transfer; it does not automatically interrupt a running remote program.
+
+Inspect and handle the terminal yourself. Then say:
+
+> 已处理完，登录和目标选择都已完成，现在可以继续。
+
+The Agent uses resume to record recovery and prepare the shell again. The same session_id remains valid while that binding exists. Recreating or rebinding a session produces a new ID.
+
+After timeout, disconnection or uncertain initialization, a remote task may still run. Inspect it before resuming. Unknown commands are never automatically retried, reconnected or sent Ctrl+C. Old unknown results remain unknown after recovery.
+
+If the connection itself is gone, takeover reports connection_ended with taken_over=false. After you acknowledge the old unknown outcome, resume records recovery but returns ready=false (exit 4). Explicitly create a new connection with a new name; the old session_id never redirects to it.
+
+Without an Agent, use `takeover` and `resume` in a real terminal or with an explicitly reviewed `--confirm`. The no-second-terminal workflow is designed for a human paired with a local-CLI-capable Agent.
+
+## Agent interface
+
+The skill checks actual capabilities before using the new flow. For direct integration, replace SESSION_ID with the full ID from list/status and EXEC_ID with a unique ID generated and retained **before submitting that command**:
 
 ```bash
-remote-terminal handoff --to human --confirm --json
-remote-terminal attach --writable
+remote-terminal capabilities --json
+remote-terminal list --json
+remote-terminal status --session-id SESSION_ID --json
+remote-terminal ready --session-id SESSION_ID --confirm --json
+remote-terminal exec --session-id SESSION_ID --request-id EXEC_ID --timeout 30 --json 'df -h'
+remote-terminal request --session-id SESSION_ID --request-id EXEC_ID --json
 ```
 
-This invalidates shell confirmation; initialize and confirm again before another Agent handoff.
+ready requires the user's current handoff, including completed login/target selection and an idle shell. It freezes human clients, transfers an internal helper in acknowledged chunks and commits a verified handshake and Agent control in one resource-lock transaction. Hostname/user/cwd are automatically read and marked as shell-reported; optional `--expected-host` adds an explicit hostname comparison.
 
-While an execution coordinator is alive, a separate CLI may request an interrupt:
+session_id is not an authorization token. The host Agent remains responsible for authorization of the actual task. `--confirm` acknowledges a management action.
+
+Each command runs in an isolated non-interactive Bash, with stdin `/dev/null`. Directory and exported environment are inherited; cd/export do not persist across requests. Use `cd /path && command` inside one request. Editors, password prompts, pagers, /dev/tty input and background/detached jobs are outside the reliable execution profile.
+
+`terminal_output` is merged shared PTY output, not isolated stdout/stderr. Output may be truncated while completion is still detected. Limits are 2048 UTF-8 bytes per script, 4096 per input line and 1 MiB output by default. Later queries retain metadata, not old output. Reusing an ID never resubmits the command; a different command with that ID is rejected.
+
+## Status, diagnostics and advanced operations
 
 ```bash
-remote-terminal interrupt --request-id inspect-disk-001 --confirm --json
+remote-terminal status
+remote-terminal doctor
+remote-terminal doctor --session-id SESSION_ID --json
+remote-terminal --help --advanced
 ```
 
-`requested` is not proof that an interrupt was delivered or that remote processes stopped. A valid completion frame can establish the foreground exit status; otherwise the result remains unknown. Timeout does **not** send Ctrl+C, cancel remote work, retry the request, reconnect, or reauthenticate.
+Human output gives the state and a next step. JSON includes versioned fields, local lock/preparation state and bounded recent request metadata. doctor separates local runtime dependencies from the target's **last confirmed** shell information and never probes a login prompt.
 
-After timeout or another unknown outcome:
+Use [configuration](examples/config.json) only to change defaults or permissions; the private config file must have mode 0600. Defaults live under the standard XDG config/state locations. State and audit do not store command bodies, terminal output or credentials.
 
-```bash
-remote-terminal request --request-id inspect-disk-001 --json
-remote-terminal handoff --to human --takeover --request-id inspect-disk-001 --confirm --json
-remote-terminal attach --writable
-```
+Existing start/bind/attach/shell-init/confirm-shell/handoff/recover/recover-lock interfaces remain available for advanced integrations. [Protocol](docs/execution-protocol.md), [troubleshooting](docs/troubleshooting.md), [security boundaries](SECURITY.md), [development](CONTRIBUTING.md), [remediation evidence](docs/remediation-validation.md).
 
-Inspect and resolve the foreground program yourself. Only after doing so, record recovery:
+Non-interactive `--json` stdout contains one JSON object. Exit codes: 0 success; 1 confirmed remote nonzero; 2 invalid input/config; 3 missing dependency/capability; 4 missing/changed binding; 5 permission/confirmation/selection; 6 busy; 7 deadline; 8 local I/O/protocol/state; 9 unknown outcome/recovery required.
 
-```bash
-remote-terminal recover --request-id inspect-disk-001 --confirm --json
-```
-
-Recovery leaves the old result unknown, clears the active dispatch claim, and requires new shell initialization/confirmation. It never reruns the old command. If the connection or pane identity changed, acknowledge the unknown request, unbind the stale binding and explicitly create/bind a new pane.
-
-If a CLI was killed, its directory lock deliberately remains:
-
-```bash
-remote-terminal recover-lock --scope execution --confirm --json
-```
-
-This only recovers a verifiably dead local holder; it does not recover the remote command. `registry`, `metadata`, and `audit` scopes cover the other local locks. Unknown ownership, PID reuse, another boot or an incomplete owner record requires controlled manual maintenance with all Bridge writers stopped. See [troubleshooting](docs/troubleshooting.md).
-
-## Bind an existing pane and raw input
-
-```bash
-remote-terminal bind --session existing --socket /path/to/tmux.sock --pane '%3' --permissions read,exec --confirm --json
-```
-
-Only the registered pane is accessible. Linked panes, changed process identities and synchronized input are rejected. `exec` requires a dedicated single-pane session so a control client cannot subscribe to another pane's output. External panes can be unbound but cannot be stopped by Bridge.
-
-Raw input is a separate low-level operation, disabled by default. To enable it, configure `security.allow_raw_send=true`, grant `raw_send` in the session policy and binding, and keep human control:
-
-```bash
-remote-terminal send --raw --text 'pwd'
-remote-terminal send --raw --text 'pwd' --enter
-```
-
-Text alone does not press Enter. Control characters and embedded newlines are rejected. A successful send only means tmux accepted input; it is not an execution result. Raw input revokes shell confirmation, and partial/failed input requires inspection and explicit human handoff.
-
-## Configuration and machine interface
-
-Copy [examples/config.json](examples/config.json) to `$XDG_CONFIG_HOME/agent-terminal-bridge/config.json` or `~/.config/agent-terminal-bridge/config.json`, with mode `0600`. Private state defaults to `$XDG_STATE_HOME/agent-terminal-bridge` or `~/.local/state/agent-terminal-bridge`; use a local filesystem. `--config` chooses an explicit configuration file. Files are standard JSON with checked types, ranges and unknown keys.
-
-Non-interactive `--json` commands print exactly one JSON object on stdout. Diagnostics use stderr. All results include `schema_version: 1` and `ok`; failed exec results distinguish confirmed nonzero completion from an unknown exit code (`null`).
-
-| Exit | Meaning |
-|---|---|
-| 0 | Successful operation / confirmed remote exit 0 |
-| 1 | Confirmed nonzero remote exit |
-| 2 | Arguments, configuration or input error |
-| 3 | Missing dependency / unsupported capability |
-| 4 | Missing or changed binding/request |
-| 5 | Permission, confirmation or control ownership required |
-| 6 | Resource busy |
-| 7 | Deadline exceeded |
-| 8 | Local I/O, protocol or state error |
-| 9 | Unknown outcome / recovery required |
-
-`--timeout` applies to `exec` and `confirm-shell`; ordinary local tmux queries have bounded internal deadlines. An unknown result must never be automatically retried.
-
-See [Agent integration](docs/agent-integration.md), [execution protocol](docs/execution-protocol.md), [SECURITY.md](SECURITY.md), and [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
+Implemented in TypeScript + Bun 1.4.2. MIT licensed.

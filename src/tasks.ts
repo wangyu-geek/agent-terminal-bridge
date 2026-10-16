@@ -85,6 +85,40 @@ export class Tasks {
   }
   async save(binding: Binding, task: Task): Promise<void> {
     await writeAtomic(this.path(binding, task.id), task)
+    if (task.kind === "run" && task.state === "prepared") {
+      const ids = await this.recentIds(binding)
+      await writeAtomic(this.recentPath(binding), {
+        bindingId: binding.id,
+        ids: [task.id, ...ids.filter((id) => id !== task.id)].slice(0, 20),
+      })
+    }
+  }
+  private recentPath(binding: Binding) {
+    return join(this.state.requests, `recent-${digest(binding.id)}.json`)
+  }
+  private async recentIds(binding: Binding): Promise<string[]> {
+    const value = await optionalJson(this.recentPath(binding))
+    if (value === null) return []
+    const data = object(value, "recent requests")
+    keys(data, ["bindingId", "ids"], "recent requests")
+    requireValue(
+      data.bindingId === binding.id &&
+        Array.isArray(data.ids) &&
+        data.ids.length <= 20,
+      "STATE_ERROR",
+      "Recent request index is invalid",
+      8,
+    )
+    return data.ids.map((id) => requestId(string(id, "recent request ID", 128)))
+  }
+  async recent(binding: Binding): Promise<Task[]> {
+    const result: Task[] = []
+    for (const id of await this.recentIds(binding)) {
+      const task = await this.get(binding, id)
+      requireValue(task, "STATE_ERROR", "Recent request record is missing", 8)
+      result.push(await this.observe(task))
+    }
+    return result
   }
   async observe(task: Task): Promise<Task> {
     if (!isPending(task) || task.state === "unknown") return task

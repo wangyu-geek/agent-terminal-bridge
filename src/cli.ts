@@ -5,12 +5,15 @@ import pkg from "../package.json"
 import { loadConfig } from "./config.ts"
 import { BridgeError, requireValue } from "./errors.ts"
 import { Executor, resultExitCode } from "./executor.ts"
+import { inspectDirectoryLock, recoverDirectoryLock } from "./locking.ts"
 import { OPERATIONS } from "./models.ts"
 import { sanitizeText } from "./output.ts"
+import { errorNextStep, humanResult } from "./presentation.ts"
 import { Sessions } from "./session.ts"
 import { State } from "./state.ts"
 import { checkTmux, randomNonce } from "./tmux.ts"
 import { alias, choice, integer } from "./validate.ts"
+import { Workflow } from "./workflow.ts"
 
 const OPTIONS = {
   json: { type: "boolean" },
@@ -18,6 +21,8 @@ const OPTIONS = {
   version: { type: "boolean" },
   config: { type: "string" },
   session: { type: "string" },
+  "session-id": { type: "string" },
+  advanced: { type: "boolean" },
   pane: { type: "string" },
   socket: { type: "string" },
   ssh: { type: "string" },
@@ -37,10 +42,14 @@ const OPTIONS = {
   "expected-host": { type: "string" },
   takeover: { type: "boolean" },
 } as const
-const COMMON = ["json", "help", "config", "session"]
+const COMMON = ["json", "help", "config", "session", "session-id"]
 const COMMAND_OPTIONS: Record<string, string[]> = {
   doctor: [],
   capabilities: [],
+  connect: [],
+  ready: ["confirm", "expected-host", "timeout"],
+  takeover: ["confirm", "timeout"],
+  resume: ["confirm", "expected-host", "timeout"],
   start: ["ssh"],
   bind: ["socket", "pane", "permissions", "confirm"],
   unbind: ["confirm"],
@@ -70,6 +79,11 @@ export function capabilities() {
       exec: true,
       shell_init: true,
       directory_lock_recovery: true,
+      connect: true,
+      session_id_selection: true,
+      ready: true,
+      takeover: true,
+      resume: true,
     },
     shell_profiles: ["bash-v1"],
     requires_local_socket_access: true,
@@ -110,12 +124,14 @@ export async function main(args: string[]): Promise<number> {
         command: "remote-terminal",
         version: pkg.version,
         commands: Object.keys(COMMAND_OPTIONS),
-        usage: "remote-terminal <command> [--session remote] [--json]",
+        advanced: values.advanced ?? false,
+        usage:
+          "remote-terminal <command> [--session-id ID | --session NAME] [--json]",
         notes: [
           "start/bind register a pane; authentication remains manual",
           "raw send is disabled by default; send is not exec",
           "--confirm acknowledges an explicit management action",
-          "exec requires initialized Bash >=4, shell confirmation and Agent handoff",
+          "after manual login, ready prepares the selected Bash >=3.2 shell and hands it to the Agent",
         ],
       }
       emit(help, json)
@@ -125,7 +141,7 @@ export async function main(args: string[]): Promise<number> {
     requireValue(allowed, "INVALID_INPUT", "Unknown command")
     requireValue(
       positionals.length === 1 ||
-        (command === "exec" && positionals.length === 2),
+        (["exec", "connect"].includes(command) && positionals.length === 2),
       "INVALID_INPUT",
       "Unexpected positional arguments",
     )
@@ -142,13 +158,38 @@ export async function main(args: string[]): Promise<number> {
       3,
     )
     const config = await loadConfig(values.config)
-    const session = alias(values.session ?? config.session)
+    requireValue(
+      !(values["session-id"] !== undefined && values.session !== undefined),
+      "INVALID_INPUT",
+      "Use either --session-id or --session, not both",
+    )
     if (command === "capabilities") {
       emit(capabilities(), json)
       return 0
     }
     if (command === "doctor") {
       const backend = await checkTmux(config.minimumTmux)
+      let target: object = {
+        state: "not_checked",
+        message:
+          "Complete login and ready before target capabilities can be reported; no remote probe was sent",
+      }
+      if (values["session-id"] || values.session) {
+        const saved = new State(config.stateDir)
+        await saved.init()
+        const name = await saved.select(values["session-id"], values.session)
+        const status = await new Sessions(config, saved).status(name)
+        target = {
+          state:
+            status.shell.state === "confirmed"
+              ? "last_confirmed"
+              : "not_checked",
+          session_id: status.session_id,
+          profile: status.shell.profile,
+          hostname: status.shell.endpoint_label,
+          bash_version: status.shell.bash_version,
+        }
+      }
       emit(
         {
           bun_version: Bun.version,
@@ -158,6 +199,14 @@ export async function main(args: string[]): Promise<number> {
           backend_capabilities: backend.capabilities,
           state_directory: config.stateDir,
           actual_features: capabilities().features,
+          local_environment: {
+            bun_version: Bun.version,
+            platform: process.platform,
+            arch: process.arch,
+            tmux_version: backend.version,
+            ssh_available: Bun.which("ssh") !== null,
+          },
+          target_environment: target,
         },
         json,
       )
@@ -167,6 +216,149 @@ export async function main(args: string[]): Promise<number> {
     await state.init()
     const sessions = new Sessions(config, state)
     const executor = new Executor(sessions)
+    const workflow = new Workflow(sessions)
+    if (command === "connect") {
+      requireValue(
+        !json,
+        "INVALID_INPUT",
+        "connect is interactive; use list/status --json for inspection",
+      )
+      requireValue(
+        process.stdin.isTTY && process.stdout.isTTY,
+        "TTY_REQUIRED",
+        "connect requires a real terminal; run remote-terminal connect SSH_ALIAS there",
+        5,
+      )
+      let name: string
+      if (positionals[1] !== undefined) {
+        requireValue(
+          values["session-id"] === undefined,
+          "INVALID_INPUT",
+          "A new SSH connection cannot reuse a session_id",
+        )
+        name = alias(values.session ?? config.session)
+        const abandoned: string[] = []
+        for (const scope of ["registry", "audit"]) {
+          const lock = await inspectDirectoryLock(state.locks, scope)
+          requireValue(
+            lock !== "unknown",
+            "LOCK_OWNER_UNKNOWN",
+            "Local setup lock ownership cannot be verified; controlled maintenance is required",
+            9,
+          )
+          if (lock === "dead") abandoned.push(scope)
+        }
+        if (abandoned.length) {
+          await confirm(
+            undefined,
+            "A previous local setup process has ended. Recover its verified abandoned setup locks? Remote tasks will not be changed.",
+          )
+          for (const scope of abandoned)
+            await recoverDirectoryLock(state.locks, scope)
+        }
+        const existing = (await state.list()).find(
+          (binding) => binding.alias === name,
+        )
+        if (existing) {
+          console.error(
+            `Session ${existing.alias} already exists: session_id=${existing.id}, SSH entry=${existing.sshAlias ?? "unknown"}.`,
+          )
+          const selection = await question(
+            "Reuse this exact session [r], choose a new session name [n], or cancel [Enter]? ",
+          )
+          if (selection === "n")
+            name = alias(await question("New session name: "))
+          else
+            requireValue(
+              selection === "r",
+              "SESSION_CONFLICT",
+              "Connection was not created; select an existing session or a new --session name",
+              4,
+            )
+          if (selection === "r") {
+            await state.select(existing.id)
+            await sessions.showSessionId(existing)
+            const status = await sessions.status(name)
+            console.log(humanResult(status))
+            return await sessions.attach(name, status.control === "human")
+          }
+        }
+        requireValue(
+          Bun.which("ssh"),
+          "DEPENDENCY_MISSING",
+          "Local OpenSSH is required for connect",
+          3,
+        )
+        const created = await sessions.start(name, positionals[1], true)
+        await state.select(created.id)
+        await sessions.showSessionId(created)
+      } else {
+        if (values["session-id"] !== undefined || values.session !== undefined)
+          name = await state.select(values["session-id"], values.session)
+        else {
+          const bindings = await state.list()
+          if (bindings.length > 1) {
+            console.error(
+              bindings
+                .map(
+                  (binding, index) =>
+                    `${index + 1}. ${binding.alias} | session_id=${binding.id}`,
+                )
+                .join("\n"),
+            )
+            const selected = integer(
+              Number(await question("Choose a session number: ")),
+              "session number",
+              1,
+              bindings.length,
+            )
+            const chosen = bindings[selected - 1]
+            requireValue(
+              chosen,
+              "INVALID_INPUT",
+              "Choose a listed session number",
+            )
+            name = await state.select(chosen.id)
+          } else name = await state.select()
+        }
+        await sessions.showSessionId(await state.load(name))
+      }
+      const status = await sessions.status(name)
+      console.log(humanResult(status))
+      return await sessions.attach(name, status.control === "human")
+    }
+    const session =
+      values["session-id"] !== undefined
+        ? await state.select(values["session-id"])
+        : ["ready", "takeover", "resume"].includes(command)
+          ? await state.select(undefined, values.session)
+          : alias(values.session ?? config.session)
+    if (["ready", "takeover", "resume"].includes(command)) {
+      const ended =
+        command === "resume" &&
+        (await sessions.status(session)).display_state === "connection_ended"
+      await confirm(
+        values.confirm,
+        ended
+          ? "Acknowledge the old unknown outcome without claiming the remote program stopped? This connection cannot be resumed; a new connection must be created explicitly."
+          : command === "takeover"
+            ? "Return this selected terminal to human control without automatically interrupting its program?"
+            : "Login and target selection are complete, prior work is resolved, and this selected shell is idle and ready for the Agent?",
+      )
+      const timeout = timeoutSeconds(
+        values.timeout,
+        config.timeoutSeconds,
+        config.maxTimeoutSeconds,
+      )
+      const result =
+        command === "ready"
+          ? await workflow.ready(session, timeout, values["expected-host"])
+          : command === "takeover"
+            ? await workflow.takeover(session, timeout)
+            : await workflow.resume(session, timeout, values["expected-host"])
+      emit(result, json)
+      return "connection_ended" in result && result.connection_ended ? 4 : 0
+    }
     if (values.pane && command !== "bind")
       requireValue(
         (await state.load(session)).paneId === values.pane,
@@ -379,29 +571,7 @@ export async function main(args: string[]): Promise<number> {
         "attach requires a real terminal",
         5,
       )
-      const binding = await state.load(session)
-      sessions.requirePermission(binding, "read")
-      await sessions.verify(binding)
-      if (values.writable)
-        requireValue(
-          binding.control === "human",
-          "PERMISSION_DENIED",
-          "Writable attach requires human control",
-          5,
-        )
-      const proc = Bun.spawn(
-        [
-          "tmux",
-          "-S",
-          binding.socketPath,
-          "attach-session",
-          ...(values.writable ? [] : ["-r"]),
-          "-t",
-          binding.sessionId,
-        ],
-        { stdin: "inherit", stdout: "inherit", stderr: "inherit" },
-      )
-      return await proc.exited
+      return await sessions.attach(session, values.writable ?? false)
     }
     throw new BridgeError("INVALID_INPUT", "Unknown command", 2)
   } catch (error) {
@@ -433,9 +603,19 @@ export async function main(args: string[]): Promise<number> {
         message: failure.message,
         retryable: failure.retryable,
       },
+      next_action: {
+        action: "inspect",
+        requires_confirmation: true,
+        message: errorNextStep(failure.code),
+      },
     }
     if (json) console.log(JSON.stringify(result))
-    else console.error(sanitizeText(`${failure.code}: ${failure.message}`))
+    else
+      console.error(
+        sanitizeText(
+          `${failure.code}: ${failure.message}\nNext: ${errorNextStep(failure.code)}`,
+        ),
+      )
     return failure.exitCode
   }
 }
@@ -482,11 +662,9 @@ async function readCommand(limit: number): Promise<string> {
 
 function emit(result: object, json: boolean): void {
   console.log(
-    JSON.stringify(
-      { schema_version: 1, ok: true, ...result },
-      null,
-      json ? undefined : 2,
-    ),
+    json
+      ? JSON.stringify({ schema_version: 1, ok: true, ...result })
+      : sanitizeText(humanResult(result)),
   )
 }
 
@@ -494,10 +672,23 @@ function bindingResult(binding: Awaited<ReturnType<Sessions["start"]>>) {
   return {
     session: binding.alias,
     binding_id: binding.id,
+    session_id: binding.id,
     ownership: binding.ownership,
     pane_id: binding.paneId,
     control: binding.control,
     shell_state: binding.shell.state,
+  }
+}
+
+async function question(prompt: string): Promise<string> {
+  const input = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  })
+  try {
+    return (await input.question(prompt)).trim()
+  } finally {
+    input.close()
   }
 }
 

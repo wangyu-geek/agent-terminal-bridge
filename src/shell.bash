@@ -1,4 +1,4 @@
-if [[ -n ${BASH_VERSION:-} ]] && (( BASH_VERSINFO[0] >= 4 )); then
+if [[ -n ${BASH_VERSION:-} ]] && (( BASH_VERSINFO[0] > 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] >= 2) )); then
   __atb___ATB_NONCE__() {
     local _atb_op=${1-} _atb_request=${2-} _atb_payload=${3-}
     local _atb_source _atb_rc _atb_host _atb_user _atb_cwd
@@ -22,7 +22,7 @@ if [[ -n ${BASH_VERSION:-} ]] && (( BASH_VERSINFO[0] >= 4 )); then
           builtin printf '\036ATB1|__ATB_NONCE__|%s|REJECT|METADATA_LIMIT\037' "$_atb_request"
           return 0
         fi
-        builtin printf '\036ATB1|__ATB_NONCE__|%s|PROBE|%s|%s|%s|%s\037' "$_atb_request" "$_atb_host" "$_atb_user" "$_atb_cwd" "${BASH_VERSINFO[0]}"
+        builtin printf '\036ATB1|__ATB_NONCE__|%s|PROBE|%s|%s|%s|%s|%s.%s.%s\037' "$_atb_request" "$_atb_host" "$_atb_user" "$_atb_cwd" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"
         ;;
       run)
         if (( ${#_atb_payload} > 2732 )) || [[ ! $_atb_payload =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
@@ -48,5 +48,5 @@ if [[ -n ${BASH_VERSION:-} ]] && (( BASH_VERSINFO[0] >= 4 )); then
   }
   export -n -f __atb___ATB_NONCE__
 else
-  printf '%s\n' 'Agent Terminal Bridge requires Bash >=4 in the selected target shell.' >&2
+  printf '%s\n' 'Agent Terminal Bridge requires Bash >=3.2 in the selected target shell.' >&2
 fi

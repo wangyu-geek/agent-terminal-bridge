@@ -1,5 +1,9 @@
 # Shared terminal access
 
+If the host supports skills, load the installed `agent-terminal-bridge` skill for shared-terminal tasks. Otherwise read the bundled [SKILL.md](../skills/agent-terminal-bridge/SKILL.md) and its relevant reference before acting; when copying this example elsewhere, replace that path with the installed skill path. The skill checks capabilities and distinguishes current commands from planned session_id workflows.
+
+Use the skill's session workflow when capabilities include session_id_selection, ready, takeover and resume. The instructions below apply only to older installations where those capabilities are absent.
+
 Use the installed Agent Terminal Bridge CLI only for the user-authorized session. The user authenticates and selects the destination manually in tmux.
 
 Before executing, inspect capabilities and status:

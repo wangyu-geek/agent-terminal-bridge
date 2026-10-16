@@ -22,6 +22,21 @@ const PANE_FORMAT = [
 
 export class Tmux {
   constructor(readonly socket: string) {}
+  attach(sessionId: string) {
+    return Bun.spawn(
+      [
+        "tmux",
+        "-u",
+        "-S",
+        this.socket,
+        "attach-session",
+        "-r",
+        "-t",
+        sessionId,
+      ],
+      { stdin: "inherit", stdout: "inherit", stderr: "inherit" },
+    )
+  }
   async run(
     args: string[],
     maxBytes = 65536,
@@ -150,6 +165,7 @@ export class Tmux {
           readonly: readonly === "1",
           control: control === "1",
           key: `${name}|${pid}|${created}`,
+          pid: Number(pid),
           ignoreSize: (flags ?? "").split(",").includes("ignore-size"),
         }
       })

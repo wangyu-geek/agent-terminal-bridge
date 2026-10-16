@@ -1,6 +1,6 @@
 # Agent Terminal Bridge 开发指南
 
-本文件面向在本仓库中编写代码的开发者和 Agent。使用已安装 Bridge 操作终端的说明应放在 `docs/agent-integration.md` 与 `examples/AGENTS.md`，不要混淆开发约束和运行时操作指引。
+本文件面向在本仓库中编写代码的开发者和 Agent。使用已安装 Bridge 操作终端的说明放在 `skills/agent-terminal-bridge/SKILL.md` 及其 references，接入与安装见 `docs/agent-integration.md` 与 `examples/AGENTS.md`，不要混淆开发约束和运行时操作指引。
 
 ## 项目与设计依据
 
@@ -24,7 +24,7 @@
 | 本地 CLI 与核心逻辑 | TypeScript 严格模式，Bun >=1.4.2，初始开发与 CI 固定 Bun 1.4.2 |
 | 模块与分发 | ESM / Preserve + Bundler，Bun bundle 与独立可执行文件 |
 | 终端管理 | 调用本机 tmux CLI，计划支持 tmux >=3.2，并验证实际使用的能力 |
-| 远端执行协议 | Phase 2 使用少量 Bash；bash-v1 首先面向 Linux、Bash >=4.0 和 base64 解码工具 |
+| 远端执行协议 | bash-v1 使用少量 Bash，要求目标 shell Bash >=3.2 与 base64/tr；支持范围以实际矩阵验证记录为准 |
 | 配置 | 标准 JSON，使用 JSON.parse 并显式校验 unknown 输入 |
 | 运行时依赖 | 首期保持零第三方依赖，不引入 node-gyp 或其他原生扩展 |
 | 开发依赖 | 锁定 typescript、@types/bun、@biomejs/biome，提交 bun.lock |
@@ -32,7 +32,7 @@
 
 远端不安装 Bun、Node.js、TypeScript、Bridge 软件包或常驻服务。Bash 仅承担会话内协议与子进程执行。tmux 已管理 PTY，不为相同职责引入 node-pty。
 
-macOS/Linux 是计划支持的本地主机；平台支持必须附带测试证据。检查实际 Bun 和 tmux 版本，不把 macOS 的系统 Bash 当作已满足 bash-v1 要求。独立二进制内含 Bun 运行时，但仍依赖本机 tmux。
+macOS/Linux 是计划支持的本地主机；平台支持必须附带测试证据。区分本地依赖与目标 shell 的 Bash 版本，doctor 不通过本机 Bash 推断服务器能力。独立二进制内含 Bun 运行时，但仍依赖本机 tmux。
 
 ## 实施顺序
 
@@ -52,6 +52,7 @@ Phase 1 的 capabilities 必须返回 exec=false。不得用 send+capture 拼成
 - `config.ts` / `models.ts`：配置解析、类型和有明确含义的状态数据。
 - `tmux.ts` / `control.ts`：精确寻址、输入、快照与连续输出连接。
 - `session.ts`：绑定身份、权限、shell 代次与控制权交接。
+- `workflow.ts`：ready 的持锁准备事务、takeover/resume 编排与明确恢复操作中的本地死锁检查；不通过串接 CLI 组合事务。
 - `executor.ts` / `protocol.ts`：执行事务、字节帧与结果语义。
 - `locking.ts` / `state.ts`：锁、原子状态写入、请求记录和恢复前提。
 - `security.ts`：范围、文件权限及输入约束等实际检查，不实现危险命令黑名单。
@@ -93,7 +94,8 @@ src 由 Bun 直接运行，scripts/build.ts 构建 Bun-target bundle 到 dist；
 - 外部 pane 不自动认领；不修改用户全局 tmux 配置，不覆盖已有 pipe，不调用 kill-server 清理测试或业务会话。
 - capture 返回终端文本快照，不是截图、不需要多模态模型，也不是严格的命令结果。
 - send 默认关闭，仅在明确授权的人工模式下开放；输入被 tmux 接受不表示命令完成。
-- Phase 2 exec 必须调用用户在目标 shell 中初始化的专用入口；入口缺失时不能回退为通用脚本或原始输入。
+- exec 必须调用目标 shell 内的专用入口；ready 仅在本次用户明确完成登录/目标选择并交接后，在单个资源锁内冻结人工客户端、自动分段传输并验证握手。旧 shell-init 人工入口保留兼容；入口缺失时不能回退为通用脚本或原始输入。
+- session_id 是 Bridge 绑定的公开随机 ID，不是 tmux session ID 或主机身份。用户不必提供 hostname；显式启用高级预期主机检查时才匹配。--session-id 必须精确选择并防止解析后重绑到同名会话。
 - 执行协议的参数、大小上限、Bash 配置与帧格式以 Solution.md 第 7 节为准。不要在多个模块复制不同的常量。
 - 命令在独立非交互 Bash 子进程中运行；本次 cd/export 不改变共享交互 shell。共享 PTY 的输出不能被命名为独立 stdout/stderr。
 - 不自动输入密码、MFA，不自动登录、选择服务器、重连或中断任务。真实远端操作需要相应用户授权。
@@ -142,7 +144,7 @@ bun run smoke
 - tmux 用例仅清理由本次测试创建的对象，异常路径同样遵守此限制。
 - 目录锁必须验证真实多进程竞争、owner 初始化前后崩溃、事件循环暂停、PID 复用、正常释放与双恢复者竞态，不能仅用单进程 Promise 测试宣称跨进程可靠。
 - 必测：绑定变化、字节分片与回显、输出截断、Unicode/控制字符、并发锁、CLI 事务点崩溃、重复请求和未知结果恢复。具体矩阵见 Solution.md 第 15 节。
-- Bash >=4.0 的执行配置需要在对应环境验证，不能用 macOS 旧 Bash 的语法检查代替。
+- bash-v1 的 Bash 3.2/4/5 支持需要真实 tmux 矩阵验证；ATB_TEST_BASH 显式选择测试解释器，不能失效后静默改用其他 Bash。语法检查不能代替执行与异常恢复测试。
 - 同步实现 macOS/Linux CI、Bun bundle 与平台二进制入口检查；从临时目录验证参数、JSON、退出码及不依赖源码路径。编译成功不等于目标平台验证通过。
 - 仅修改文档时检查链接、示例与方案一致性即可，不运行真实远端操作。
 

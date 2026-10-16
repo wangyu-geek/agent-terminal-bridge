@@ -153,6 +153,31 @@ export async function recoverDirectoryLock(
   }
 }
 
+export async function inspectDirectoryLock(root: string, key: string) {
+  const path = join(root, `${digest(key)}.lock`)
+  if (await exists(join(root, `${digest(key)}.maintenance`)))
+    return "unknown" as const
+  if (!(await exists(path))) return "free" as const
+  try {
+    const stat = await lstat(path)
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o077) !== 0
+    )
+      return "unknown" as const
+    const owner = readOwner(await readJsonSecure(join(path, "owner.json")))
+    if (owner.boot !== (await bootIdentity())) return "unknown" as const
+    if (processDefinitelyAbsent(owner.pid)) return "dead" as const
+    return (await processIdentity(owner.pid)) === owner.process
+      ? ("held" as const)
+      : ("unknown" as const)
+  } catch {
+    return "unknown" as const
+  }
+}
+
 export async function withLock<T>(
   root: string,
   key: string,

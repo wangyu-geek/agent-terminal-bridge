@@ -2,6 +2,8 @@
 
 > 状态：方案与实现契约。Phase 1/2 命令已有 TypeScript + Bun 实现；实际使用、构建与限制见 README.md，平台证据见 docs/compatibility.md。CI 和真实堡垒机验收未在本文中被宣称已经完成。
 >
+> connect、session_id、ready、takeover/resume 已加入当前源码；使用流程与约束见 [整改方案](docs/remediation-plan.md)，实际测试与尚待外部验收的项目见 [整改验证](docs/remediation-validation.md)。可选 sh-v1 尚未实现，不能作为当前能力声明。
+>
 > 项目定位：开源、Agent 通用、基于纯文本协议的本地共享终端工具。采用 TypeScript + Bun 实现 CLI 与 tmux 后端；不依赖特定模型、Agent SDK、终端模拟器或 Computer Use。
 
 ## 1. 目标与适用边界
@@ -53,7 +55,7 @@ Bridge 提供统一 CLI，让用户与 Agent 访问预先纳入管理的同一�
 | 计划支持下限 | tmux >=3.2；发布前必须在下限版本与发布时选定的稳定版本上验证实际使用的能力 |
 | 连接方式 | 用户现有 SSH 配置；SSH ControlMaster 为可选优化 |
 | 人工客户端 | 任意兼容 tmux 的终端模拟器，iTerm2 仅作为使用示例 |
-| 远端执行配置 | Phase 2 首先支持 Linux 上的 Bash >=4.0 与 base64 解码工具，初始化时检测 |
+| 远端执行配置 | bash-v1 要求实际目标 Bash >=3.2 与 base64/tr；完整版本在握手中检测，平台与版本矩阵以验证记录为准 |
 | Agent 接口 | CLI、版本化 JSON、能力查询；特定 Agent 适配放在示例层 |
 | 配置与测试 | JSON 应用配置、运行时校验；bun:test 直接运行 .test.ts |
 
@@ -142,7 +144,7 @@ flowchart TD
 1. 用户创建受管理会话，或者显式绑定已有 tmux pane。
 2. 用户 attach，人工完成认证及服务器选择。
 3. Phase 1 允许授权范围内的读取与人工模式下的显式输入。
-4. Phase 2 用户在目标 Bash 中完成一次会话内初始化，再验证响应并交接控制权。
+4. 用户完成登录与目标选择，并明确交接空闲 Bash shell；Agent 按 session_id 调用 ready，在一次资源锁内自动准备、握手与交接。
 5. Agent 调用 exec，CLI 建立临时输出连接、完成执行事务后退出。
 6. 用户需要交互操作时先接管；超时、异常或连接变化后进入恢复流程。
 
@@ -158,6 +160,9 @@ flowchart TD
 |---|---|---|
 | doctor | 检查依赖、版本、路径、权限及后端能力 | 1 |
 | capabilities | 返回当前安装版本实际实现的能力 | 1 |
+| connect | 在真实终端创建/选择会话并直接进入 SSH；显示 session_id，不自动认证 | 整改 |
+| ready | 明确人工交接后自动冻结客户端、传输 helper、握手并提交 Agent 控制权 | 整改 |
+| takeover / resume | 等待实际人工接管；人工处理后登记恢复并重新准备，不重发旧命令 | 整改 |
 | start | 创建受管理 tmux 会话及单一目标 pane | 1 |
 | bind / unbind | 显式登记或撤销一个已有 pane 的绑定 | 1 |
 | list / status | 仅列出和查询 Bridge 已登记会话 | 1 |
@@ -179,11 +184,12 @@ flowchart TD
 ### 4.2 参数约定
 
 - `--session <alias>`：选择 Bridge 注册表中的会话，不直接充当 tmux target。
+- `--session-id <id>`：按完整 128 位随机 Bridge ID 精确选择已登记会话，与 --session 互斥；解析后也不能重定向到同名新绑定。该 ID 不认证远端机器。
 - `--pane <id>`：用于 bind；其他操作若提供此参数，只能与已绑定 pane 一致，不能扩大操作范围。
 - `--socket <path>`：bind 时显式指定外部 tmux socket，纳入身份绑定。
 - `--json`：机器接口模式，见第 10 节。
 - `--timeout <seconds>`：有限的操作截止时间，必须为正数且有上限。
-- 当前实现中 --timeout 用于 exec 与 confirm-shell；其余本地 tmux 子步骤有独立的有限超时，不将该参数静默忽略。
+- 当前实现中 --timeout 用于 exec、confirm-shell、ready、takeover 与 resume；其余本地 tmux 子步骤有独立的有限超时，不将该参数静默忽略。
 - `--request-id <id>`：exec 的调用方幂等标识，用于查找既有记录，不构成远端重试保证。
 
 会话别名限制为 1–64 个 ASCII 字母、数字、下划线或连字符；request_id 限制为 1–128 个 ASCII 字母、数字、点、下划线或连字符。内部文件名使用规范化资源键及哈希，不直接将外部标识拼进路径。capture 的 lines 范围为 1–10000；时间参数必须为有限正数，不接受 NaN 或无穷大。
@@ -219,10 +225,10 @@ Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户
 | 字段 | 含义 |
 |---|---|
 | alias | 用户可读的 Bridge 别名 |
-| binding_id / generation | 绑定标识与代次，每次重建或重新授权均更新 |
+| binding_id / generation | 绑定标识在绑定存续期间保持；重新准备/恢复更新代次。公开 session_id 等于绑定 id，新建或重绑产生新 ID |
 | ownership | managed 或 external |
 | socket_path / server_instance_id | socket 位置与 server 实例标识 |
-| session_id / window_id / pane_id | tmux 的对象 ID |
+| tmux_session_id / window_id / pane_id | tmux 的对象 ID；内部 Binding.sessionId 是 tmux ID，与公开 session_id 分开 |
 | pane_pid / process_identity | pane 主进程及本机可验证的创建身份 |
 | permissions | read、raw_send、exec、stop 等授权能力 |
 | shell_binding | shell 初始化标识、用户确认及协议证据 |
@@ -252,7 +258,8 @@ Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户
 |---|---|---|
 | binding | valid / stale / missing | 本地注册表与 tmux 身份检查 |
 | pane | alive / exited / missing | 本地 tmux 事实 |
-| shell | uninitialized / confirmed / unknown | 初始化代次、用户确认与协议响应 |
+| shell | uninitialized / pending / confirmed / unknown | 初始化代次、用户交接与协议响应 |
+| preparation | freezing / transferring / handshaking / completed / failed | 持久化准备记录、输入是否开始及协调者身份 |
 | control | human / agent / recovery_required | 显式交接记录 |
 | task | idle / prepared / not_started / sent / running / completed / unknown | 任务记录及收到的执行帧 |
 
@@ -263,6 +270,7 @@ Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户
   "schema_version": 1,
   "ok": true,
   "session": "remote",
+  "session_id": "19b0b332d87e4df4ba70a47a549c5216",
   "binding": "valid",
   "pane": {
     "id": "%3",
@@ -273,7 +281,8 @@ Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户
     "state": "confirmed",
     "profile": "bash-v1",
     "endpoint_label": "web-01",
-    "endpoint_source": "user_confirmed_and_shell_reported"
+    "endpoint_source": "shell_reported",
+    "bash_version": "3.2.57"
   },
   "control": "agent",
   "task": {
@@ -287,7 +296,7 @@ status 是只读操作，不发送探测、不按回车、不进行 shell 初始
 
 ### 5.2 控制权交接
 
-- 新会话处于 human 模式，用户完成认证、初始化和必要的交互操作。
+- 新会话处于 human 模式，用户完成认证、目标选择和必要的交互操作；ready 在用户明确交接后自动初始化。
 - `attach` 默认以只读客户端进入；`--writable` 需要 human 模式。
 - 交接给 Agent 前，检查已知人工客户端是否可切为只读，并记录原先客户端标志。
 - 交接前由用户确认当前为无残留输入的空白 shell 提示符；不得自动发送 Ctrl+U 等按键清理一个未知程序的输入。
@@ -370,7 +379,7 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 
 仅向终端注入“开始标记 + 任意命令 + 结束标记”，即使原来位于远端，也可能在 SSH 退出后落到本地 shell 中执行。
 
-因此 exec 必须依赖用户在目标 shell 中显式安装的临时函数。初始化只定义当前 Bash 进程内的函数和状态，不写 shell 启动文件，不安装远端软件包或后台服务。
+因此 exec 必须依赖在所选目标 shell 中准备好的临时函数。ready 仅在用户明确完成登录/目标选择并交接空闲 shell 后自动安装；旧 shell-init 人工流程保留。初始化只定义当前 Bash 进程内的函数和状态，不写 shell 启动文件，不安装远端软件包或后台服务。
 
 专用函数名称包含随机绑定标识，例如 `__atb_<binding_nonce>`，不导出给子进程。远端 shell 消失后，本地 shell 或新会话通常没有该函数，原执行载荷不会直接作为命令运行。
 
@@ -378,13 +387,15 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 
 ### 7.2 初始化与交接流程
 
-1. 用户确认目标 pane 已处于受支持的 Bash 提示符，而非菜单、编辑器或密码输入状态。
-2. 在本地执行 `shell-init --session remote`，生成当前绑定代次的初始化代码。
-3. 用户查看并在目标 shell 中粘贴执行。Bridge 不自动将初始化代码发送到未经确认的终端。
-4. 初始化检测 Bash 配置、base64 解码能力及必要环境，定义非导出的临时执行函数。
-5. 用户运行 confirm-shell，Bridge 只向该函数发送新鲜的 probe 请求，不发送通用探测脚本。
-6. 解析初始化标识、请求标识及 shell 报告的 hostname/user/cwd，由用户确认期望 endpoint 后保存证据。
-7. handoff 将控制权交给 Agent，之后开放 exec。
+1. 用户确认登录与目标选择完成，所选 session_id 当前是受支持的空闲 Bash shell，而非菜单、编辑器或密码输入状态。单会话的 ID 可由 Agent 从 list 获取。
+2. ready 取得资源锁，验证绑定、权限、无未决任务，持久化准备记录和客户端恢复信息，再冻结人工输入。
+3. 订阅输出后发送内置 bootstrap，通过不超过 384 字符的编码块与逐块随机请求 ACK 传输内置 helper。完整输入行受配置上限约束，不通过一次性大段模拟键入或固定 sleep 判断完成。
+4. bootstrap 在非导出的暂存函数内校验序号/长度、解码并定义 helper，之后移除暂存函数与变量；全部操作不写远端文件。
+5. 只向专用 helper 发送新鲜 probe，验证协议字节、完整 Bash 版本和必要能力，读取 hostname/user/cwd。
+6. session_id 选择用户交接的本地共享会话；hostname 默认是 shell 自报展示信息，不要求用户填写。明确使用 --expected-host 时才进行额外名称匹配，这也不是密码学主机认证。
+7. 原子保存 shell 确认、准备完成与 Agent 控制权。传输之后失败或崩溃保留未知准备状态，需显式接管检查后 resume；不自动重传。
+
+旧 shell-init/confirm-shell/handoff 接口保持人工安装和 expected-host 契约，供高级使用与兼容；新的准备事务不会串接三个 CLI 来模拟原子性。
 
 同一 pane 每次只能有一个有效的 shell 初始化代次。绑定及请求随机标识各使用至少 128 位随机数，以固定长度十六进制表示。初始化代码和控制标识不能当作密码使用；日志中也不应无必要地持久化它们。
 
@@ -392,6 +403,7 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 
 首期执行配置命名为 `bash-v1`：
 
+- 要求目标 Bash >=3.2、base64 和 tr，测试矩阵与平台证据独立记录；不以本机 Bash 版本代替目标能力。
 - 仅执行非交互、有限时长的 Bash 命令或短脚本。
 - 临时函数解码载荷后启动独立的非交互 Bash 子进程，stdin 默认接 /dev/null。
 - 子进程使用明确的启动选项，并处理 BASH_ENV 等可能引入隐式启动脚本的设置；不继承初始化函数作为执行接口。
@@ -427,6 +439,7 @@ __atb_<binding_nonce> run <request_nonce> <base64_payload>
 - RS 为 0x1e，US 为 0x1f；函数在运行时通过 printf 输出实际控制字节。
 - 初始化代码只包含控制字节的转义写法；后续调用行不包含完整帧，减少命令回显误判。
 - probe 使用独立帧类型，hostname、user、cwd 等可变字段进行 Base64 编码，不直接拼接到帧分隔符之间。
+- PROBE 额外报告 major 与数字格式 major.minor.patch；旧 major-only 响应仅兼容 Bash >=4，Bash 3 必须验证 minor>=2。自动安装使用同一关联前缀的 ACK 帧，只有 install 解析器接受，不作为命令完成帧。
 - 支持 BEGIN 之前的 REJECT 帧，携带固定错误码，表示载荷或执行环境校验失败且尚未启动用户命令；只能在标识匹配且确未启动时返回 not_started。BEGIN 之后的错误不能冒充执行前拒绝。
 - 解析器支持任意分片，包括单个帧和 UTF-8 字符被拆到多个输出事件中。
 - 只接受当前绑定和请求的合法 BEGIN -> END 顺序；校验退出码、帧长度和字段字符集。
@@ -512,7 +525,7 @@ interrupt 通过短锁原子登记带有 request_id 和绑定代次的控制请�
 
 人工强制接管同样由执行进程先停止自动输入、记录结果不确定并释放执行锁，再完成交接。执行进程已死亡时走遗留记录恢复；仍存活但无法响应时返回明确的协调失败，保留恢复要求，不静默抢锁或杀进程。执行进程收到控制请求只在核对绑定后处理，过期代次的中断不得作用于新任务。
 
-执行期间接管采用 `handoff --to human --takeover --request-id <id>`；该操作保留任务 unknown 与恢复要求，仅在协调完成后开放人工可写 attach，不自动将结果改为已停止。
+正常使用通过 `takeover --session-id <id>` 自动定位原请求并等待执行协调者实际交回控制权；旧 `handoff --to human --takeover --request-id <id>` 仍可用。操作保留任务 unknown 与恢复要求，仅在协调完成后恢复原先可写客户端，不自动将结果改为已停止，超时不声称接管完成。
 
 所有同时需要两种锁的路径统一先取资源执行锁、再短暂取元数据锁；控制请求只取元数据锁，释放后再等待确认，避免反向持锁死锁。
 
@@ -652,7 +665,12 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
     "raw_send": true,
     "exec": true,
     "shell_init": true,
-    "directory_lock_recovery": true
+    "directory_lock_recovery": true,
+    "connect": true,
+    "session_id_selection": true,
+    "ready": true,
+    "takeover": true,
+    "resume": true
   },
   "shell_profiles": ["bash-v1"],
   "requires_local_socket_access": true,
@@ -809,9 +827,11 @@ typecheck 调用 `bun run --bun tsc --noEmit`，使用已安装的锁定版本�
 
 各宿主可使用其支持的说明文件加载以下规则，核心 CLI 不自动识别 Agent 品牌或写入宿主配置：
 
+随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。默认帮助只展示 connect/status/takeover/resume，完整命令通过 --help --advanced 或 JSON 帮助查询。
+
 1. 先查询 capabilities 与 status，使用实际实现的能力。
 2. 仅操作用户明确授权的 Bridge 会话。
-3. 认证、菜单选择及首次 shell 初始化由用户完成。
+3. 认证和菜单选择由用户完成；明确交接后，由 ready 自动准备目标 shell，不要求用户提供 hostname 或粘贴代码。
 4. 自动执行使用 exec，不使用 send+capture 模拟完成检测。
 5. 不将 capture 文本、提示符或 send 成功当作命令执行结果。
 6. 超时、unknown、RECOVERY_REQUIRED 时停止自动写入，不重试原命令。

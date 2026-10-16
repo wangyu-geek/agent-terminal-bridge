@@ -4,7 +4,11 @@
 
 ## Shell binding
 
-`shell-init` generates the statically embedded `src/shell.bash` template with a random 128-bit identifier. A human reviews and runs it in the selected Bash >=4. It defines `__atb_<nonce>` without exporting it, writing startup files or installing a remote program. `confirm-shell` sends a fresh probe to that function and checks the user-specified hostname against its response.
+After the human completes login/target selection and explicitly hands over an idle Bash >=3.2 shell, `ready` prepares it in one resource-lock transaction. session_id selects an exact Bridge binding, not a hostname or tmux ID. Saved client flags and a durable preparation record precede freezing human clients. A short embedded bootstrap installs a non-exported staging function, receives Base64 helper chunks of at most 384 characters, and acknowledges each ordered chunk with a fresh nonce. The decoded embedded helper is evaluated only inside that staging function, then the staging function/variables are removed. No remote files or startup scripts are written.
+
+The bootstrap line and all chunk lines respect max_input_line_bytes. Every line waits for a remote ACK; tmux acceptance or a fixed sleep is not readiness. The coordinator rechecks binding/client ownership through transfer, probes the installed helper, then atomically commits shell confirmation and Agent control. Bootstrap/chunk/probe/commit failures retain a preparation phase and require inspection if input may have been sent. Transfer is not automatically repeated after unknown results. Source, bundle and native builds embed both bootstrap and helper assets.
+
+Legacy `shell-init` still generates a human-installable helper, and `confirm-shell` still requires an expected hostname. New `ready`/`resume` automatically read hostname/user/cwd and full Bash version; `--expected-host` is optional when the user explicitly wants that extra comparison.
 
 The hostname, user and cwd are reported by the shell, not authenticated independently. Losing the function causes an unknown/rejected outcome; the payload is never decoded or executed by a generic local fallback. There is no prompt-regex detector.
 
@@ -20,7 +24,7 @@ shared PTY bytes
 RS ATB1|binding_nonce|request_nonce|END|exit_code US
 ```
 
-RS is 0x1e and US is 0x1f. A PROBE frame carries Base64 hostname/user/cwd and the Bash major version. REJECT is valid only before BEGIN and means the user command was not started. Wrong ordering, duplicate completion, oversized frames and invalid fields cannot establish completion. Frame buffers are limited to 8192 bytes.
+RS is 0x1e and US is 0x1f. Installation uses `ATB1|binding_nonce|request_nonce|ACK`. A PROBE frame carries Base64 hostname/user/cwd, Bash major version, and a numeric major.minor.patch version. Old major-only probes remain compatible for Bash >=4; Bash 3 requires a verified minor >=2. ACK is accepted only by an installation parser, never as execution completion. REJECT is valid only before BEGIN and means the user command was not started. Wrong ordering, duplicate completion, oversized frames and invalid fields cannot establish completion. Frame buffers are limited to 8192 bytes.
 
 Control-mode `%end` acknowledges a tmux command, not the remote command. `%output` octal decoding preserves raw bytes, including invalid UTF-8. Framing runs before display decoding; UTF-8 is decoded incrementally, known ANSI/OSC sequences are removed, other controls are shown as escapes. The retained output is bounded and truncation never stops draining the stream or parsing END.
 

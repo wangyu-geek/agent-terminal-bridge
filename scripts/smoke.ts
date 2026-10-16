@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { chmod, copyFile, mkdir, writeFile } from "node:fs/promises"
-import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import { paneTarget, Tmux } from "../src/tmux.ts"
 import { compatibleBash, Fixture, root } from "../tests/helpers.ts"
@@ -8,7 +7,7 @@ import { compatibleBash, Fixture, root } from "../tests/helpers.ts"
 const bash = await compatibleBash()
 assert(
   bash && Bun.which("tmux"),
-  "Packaging smoke checks require tmux and Bash >=4",
+  "Packaging smoke checks require tmux and Bash >=3.2",
 )
 const packageArgument = process.argv
   .find((value) => value.startsWith("--package="))
@@ -73,20 +72,19 @@ for (const artifact of [
       Buffer.from(`exec '${bash}' --noprofile --norc`),
       true,
     )
-    const initialized = await call(["shell-init"])
-    assert.equal(typeof initialized.code, "string")
-    await f.installFixtureCode(binding, String(initialized.code))
-    await call([
-      "confirm-shell",
-      "--expected-host",
-      hostname(),
+    const ready = await call([
+      "ready",
+      "--session-id",
+      binding.id,
       "--confirm",
       "--timeout",
-      "3",
+      "5",
     ])
-    await call(["handoff", "--to", "agent", "--confirm"])
+    assert.equal(ready.ready, true)
     const result = await call([
       "exec",
+      "--session-id",
+      binding.id,
       "--request-id",
       "package-smoke",
       "--timeout",
@@ -95,10 +93,10 @@ for (const artifact of [
     ])
     assert.equal(result.completed, true)
     assert.equal(result.terminal_output, "clean")
-    await call(["handoff", "--to", "human", "--confirm"])
+    await call(["takeover", "--session-id", binding.id, "--confirm"])
     await call(["stop", "--confirm"])
     console.log(
-      `${artifact}: isolated startup, embedded shell template and real execution passed`,
+      `${artifact}: isolated startup, embedded bootstrap/helper, automatic ready and real execution passed`,
     )
   } finally {
     await f.cleanup()

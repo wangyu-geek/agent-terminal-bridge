@@ -1,5 +1,7 @@
 # Implementation evidence — 0.1.0
 
+> Historical Phase 1/2 baseline before the usability remediation. The current connect/session_id/ready/recovery implementation, updated Bash matrix and outstanding external acceptance are tracked in [remediation validation](docs/remediation-validation.md). Counts below describe the baseline run, not the current suite.
+
 The TypeScript/Bun CLI and the documented Phase 1/2 execution lifecycle are implemented. This record maps the implementation requirements to current files and local verification; it does not turn future release/organizational acceptance gates into claims of completed tests.
 
 | Requirement | Authoritative implementation / verification |

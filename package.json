@@ -1,0 +1,44 @@
+{
+  "name": "agent-terminal-bridge",
+  "version": "0.1.0",
+  "description": "An agent-neutral bridge to explicitly authorized tmux terminals",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "bin": {
+    "remote-terminal": "./dist/cli.js"
+  },
+  "files": [
+    "dist/cli.js",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md",
+    "Solution.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs",
+    "examples"
+  ],
+  "scripts": {
+    "dev": "bun --no-env-file run src/cli.ts",
+    "typecheck": "bun run --bun tsc --noEmit",
+    "lint": "biome check --error-on-warnings .",
+    "format": "biome check --write .",
+    "check": "bun run typecheck && bun run lint && bun run docs:check",
+    "docs:check": "bun run scripts/check-docs.ts",
+    "test:unit": "bun test ./tests/unit",
+    "test:integration": "bun test ./tests/integration --timeout 30000",
+    "test": "bun run test:unit && bun run test:integration",
+    "build": "bun run scripts/build.ts",
+    "build:bin": "bun run scripts/build-bin.ts",
+    "smoke": "bun run scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}

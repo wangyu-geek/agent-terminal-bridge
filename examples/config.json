@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "session": "remote",
+    "capture_lines": 200,
+    "timeout_seconds": 30,
+    "max_timeout_seconds": 300,
+    "max_output_bytes": 1048576,
+    "max_command_bytes": 2048,
+    "max_input_line_bytes": 4096
+  },
+  "backend": {
+    "type": "tmux",
+    "socket_name": "agent-terminal-bridge",
+    "minimum_version": "3.2"
+  },
+  "security": {
+    "require_explicit_binding": true,
+    "require_shell_initialization": true,
+    "allow_raw_send": false,
+    "allow_auto_interrupt": false
+  },
+  "storage": {
+    "persist_commands": false,
+    "persist_terminal_output": false
+  },
+  "session_policies": {
+    "remote": {
+      "description": "Explicitly authorized terminal",
+      "allowed_operations": ["read", "exec", "stop"]
+    }
+  }
+}

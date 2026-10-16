@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install Linux integration dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux bash
+      - name: Install macOS integration dependencies
+        if: runner.os == 'macOS'
+        run: brew install tmux bash
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Require integration dependencies
+        run: bun --no-env-file -e 'import { compatibleBash } from "./tests/helpers.ts"; if (!Bun.which("tmux") || !(await compatibleBash())) throw new Error("Missing integration dependencies")'
+      - run: bun run check
+      - run: bun run test
+      - run: bun run build
+      - run: bun run build:bin
+      - run: bun run smoke

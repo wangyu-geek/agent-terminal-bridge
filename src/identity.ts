@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises"
 import { hostname } from "node:os"
-import { BridgeError, hasCode } from "./errors.ts"
+import {
+  accessDenied,
+  BridgeError,
+  deniedDiagnostic,
+  hasCode,
+} from "./errors.ts"
 import { runProcess } from "./process.ts"
 
 export async function processIdentity(pid: number): Promise<string> {
@@ -13,12 +18,18 @@ export async function processIdentity(pid: number): Promise<string> {
         throw new Error("Invalid process record")
       return `${await bootIdentity()}:${pid}:${started}`
     } catch (error) {
+      if (accessDenied(error))
+        throw new BridgeError(
+          "LOCAL_ACCESS_DENIED",
+          "Cannot inspect local process identity",
+          5,
+        )
       if (hasCode(error, "ENOENT"))
         throw new BridgeError("PROCESS_MISSING", "Process has exited", 4)
       throw new BridgeError(
         "PROCESS_IDENTITY_UNKNOWN",
         "Cannot verify process creation identity",
-        4,
+        8,
       )
     }
   }
@@ -26,8 +37,20 @@ export async function processIdentity(pid: number): Promise<string> {
     ["/bin/ps", "-p", String(pid), "-o", "lstart="],
     { env: { ...process.env, LC_ALL: "C" } },
   )
-  if (result.exitCode !== 0 || !result.stdout.trim())
+  if (deniedDiagnostic(result.stderr))
+    throw new BridgeError(
+      "LOCAL_ACCESS_DENIED",
+      "Cannot run local process identity inspection; grant process inspection access",
+      5,
+    )
+  if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim())
     throw new BridgeError("PROCESS_MISSING", "Process has exited", 4)
+  if (result.exitCode !== 0 || !result.stdout.trim())
+    throw new BridgeError(
+      "PROCESS_IDENTITY_UNKNOWN",
+      "Cannot verify local process identity",
+      8,
+    )
   return `${await bootIdentity()}:${pid}:${result.stdout.trim()}`
 }
 

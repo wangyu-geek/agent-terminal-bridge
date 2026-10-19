@@ -1,7 +1,7 @@
 import { constants } from "node:fs"
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { accessDenied, BridgeError, hasCode, requireValue } from "./errors.ts"
 import { parseJson } from "./validate.ts"
 
 export async function secureDirectory(path: string): Promise<string> {
@@ -130,5 +130,11 @@ export function validateRawInput(text: string, limit: number): void {
 
 export function privatePathError(error: unknown): BridgeError {
   if (error instanceof BridgeError) return error
+  if (accessDenied(error))
+    return new BridgeError(
+      "LOCAL_ACCESS_DENIED",
+      "Cannot access private Bridge state; grant the selected state directory access",
+      5,
+    )
   return new BridgeError("STATE_ERROR", "Cannot access private Bridge state")
 }

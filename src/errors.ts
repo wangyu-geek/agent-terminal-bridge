@@ -13,7 +13,21 @@ export class BridgeError extends Error {
 
 export function ioError(error: unknown, message: string): BridgeError {
   if (error instanceof BridgeError) return error
+  if (accessDenied(error))
+    return new BridgeError("LOCAL_ACCESS_DENIED", message, 5)
   return new BridgeError("STATE_ERROR", message)
+}
+
+export function accessDenied(error: unknown): boolean {
+  return (
+    hasCode(error, "EACCES") ||
+    hasCode(error, "EPERM") ||
+    (error instanceof Error && deniedDiagnostic(error.message))
+  )
+}
+
+export function deniedDiagnostic(text: string): boolean {
+  return /Operation not permitted|Permission denied|EACCES|EPERM/i.test(text)
 }
 
 export function hasCode(error: unknown, code: string): boolean {

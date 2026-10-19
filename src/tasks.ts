@@ -84,6 +84,7 @@ export class Tasks {
     }
   }
   async save(binding: Binding, task: Task): Promise<void> {
+    this.state.requireActive(binding)
     await writeAtomic(this.path(binding, task.id), task)
     if (task.kind === "run" && task.state === "prepared") {
       const ids = await this.recentIds(binding)
@@ -131,6 +132,7 @@ export class Tasks {
     return { ...task, state: "unknown", reason: "OWNER_LOST", exitCode: null }
   }
   async setActive(binding: Binding, task: Task | null): Promise<void> {
+    this.state.requireActive(binding)
     await writeAtomic(this.activePath(binding), {
       bindingId: binding.id,
       requestId: task?.id ?? null,

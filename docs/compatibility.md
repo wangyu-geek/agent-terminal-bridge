@@ -12,7 +12,10 @@ The project targets local macOS/Linux hosts and a Bash >=3.2 target execution pr
 | macOS x64 / Linux arm64 binaries | Build targets exist; release support requires a native runner test for each target |
 | Windows | Not supported by this tmux backend |
 | WSL2 | Possible only with accessible same-environment Unix resources; not yet validated |
-| Real organizational bastion | Manual acceptance is still required for authentication, menu behavior, audit compatibility and control-byte preservation |
+| Default text view | Local PTY and headless terminal-cell tests cover live command display, blocked input, local takeover, input positioning/editing, repeated handoffs, resize and explicit reconnect; native iTerm2 scroll/selection gestures still need operator acceptance |
+| Local sandbox | Filesystem/socket/process diagnostics and denied-vs-disconnected handling are tested; the macOS Codex CLI helper is an optional integration test. This is not a claim of OS-enforced single-session isolation |
+| Real direct SSH | Final standalone-binary E2E passed on 2026-10-19 against target Bash 4.4.20, including connection reuse/selection, input rendering/editing, sandbox diagnosis, timeout/unknown and same-name reconnect with read-only old-ID history; see validation record |
+| Real organizational bastion | Initial user acceptance found five interaction defects; fixes have local/direct-SSH evidence, while bastion menu/MFA/audit and native UI re-acceptance remain pending |
 
 Automated checks cover strict config/permissions, Unicode and control input, literal tmux input, binding/respawn invalidation, mixed PTY output, output truncation, frame fragmentation, shell state isolation, duplicate request IDs, live interruption, manual takeover and owner death at execution transaction boundaries. Tests never use company credentials or real servers.
 

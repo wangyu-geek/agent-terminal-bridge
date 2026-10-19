@@ -1,7 +1,7 @@
 import { lstat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { effectivePermissions } from "./config.ts"
-import { BridgeError, requireValue } from "./errors.ts"
+import { BridgeError, hasCode, requireValue } from "./errors.ts"
 import { processIdentity } from "./identity.ts"
 import {
   digest,
@@ -19,6 +19,7 @@ import {
 import { sanitizeText, truncateUtf8 } from "./output.ts"
 import {
   checkExistingFile,
+  privatePathError,
   secureDirectory,
   validateRawInput,
 } from "./security.ts"
@@ -64,63 +65,135 @@ export class Sessions {
         await this.verify(existing)
         return existing
       }
-      // Use a short path: macOS sockaddr_un is too small for long TMPDIR paths.
-      const socketRoot = await secureDirectory(
-        join("/tmp", `agent-terminal-bridge-${process.getuid?.()}`),
-      )
-      const socket = join(
-        socketRoot,
-        `${digest(`${this.state.root}|${this.config.socketName}`).slice(0, 20)}.sock`,
-      )
-      const configPath = join(this.state.root, "managed.tmux.conf")
-      await checkExistingFile(configPath)
-      await writeFile(
-        configPath,
-        "set -g remain-on-exit on\nset -g history-limit 10000\nset -g default-shell /bin/sh\nset -g status off\nset -g synchronize-panes off\n",
-        { mode: 0o600 },
-      )
-      const id = randomNonce()
-      const sessionName = `atb-${id}`
-      const tmux = new Tmux(socket)
-      const result = await tmux.run([
-        "-f",
-        configPath,
-        "new-session",
-        "-d",
-        "-P",
-        "-F",
-        "#{pane_id}",
-        "-s",
-        sessionName,
-        "-x",
-        "160",
-        "-y",
-        "48",
-        ...(ssh ? ["ssh", "-tt", ssh] : ["/bin/sh"]),
-      ])
-      const paneId = result.trim()
-      requireValue(
-        /^%\d+$/.test(paneId),
-        "PROTOCOL_ERROR",
-        "tmux did not create the expected pane",
-        8,
-      )
-      try {
-        return await this.register(
-          name,
-          socket,
-          paneId,
-          "managed",
-          ["read", "exec", "raw_send", "stop"],
-          ssh,
-        )
-      } catch (error) {
-        await tmux
-          .run(["kill-session", "-t", `=${sessionName}`])
-          .catch(() => {})
-        throw error
-      }
+      return this.createManaged(name, ssh)
     })
+  }
+
+  async startConnection(ssh: string, name?: string): Promise<Binding> {
+    await checkTmux(this.config.minimumTmux)
+    requireValue(
+      Bun.which("ssh"),
+      "DEPENDENCY_MISSING",
+      "Local OpenSSH is required for a new connection",
+      3,
+    )
+    requireValue(
+      /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(ssh),
+      "INVALID_INPUT",
+      "SSH destination must be a configuration alias",
+    )
+    return withLock(this.state.locks, "registry", async () => {
+      const occupied = new Set(
+        (await this.state.list()).map((binding) => binding.alias),
+      )
+      // SSH entry names also allow dots; Bridge display names do not.
+      const base = ssh.slice(0, 48).replaceAll(".", "-")
+      let selected = name ?? base
+      if (name)
+        requireValue(
+          !occupied.has(name),
+          "SESSION_CONFLICT",
+          "This display name is occupied; return to it explicitly or use --new without --session",
+          4,
+        )
+      else {
+        for (let index = 2; occupied.has(selected); index++)
+          selected = `${base}-${index}`
+      }
+      return this.createManaged(selected, ssh)
+    })
+  }
+
+  async archiveEnded(name: string, expectedId: string): Promise<void> {
+    const original = await this.state.load(name)
+    this.state.requireActive(original)
+    return withLock(this.state.locks, resourceKey(original), async () =>
+      withLock(this.state.locks, "registry", async () => {
+        const binding = await this.state.load(name)
+        requireValue(
+          binding.id === expectedId,
+          "BINDING_CHANGED",
+          "Session changed before archival",
+          4,
+        )
+        let ended = false
+        try {
+          ended = (await this.verify(binding)).dead
+        } catch (error) {
+          if (
+            !(error instanceof BridgeError) ||
+            !["BINDING_CHANGED", "PROCESS_MISSING"].includes(error.code)
+          )
+            throw error
+          ended = true
+        }
+        requireValue(
+          ended,
+          "SESSION_CONFLICT",
+          "A live connection cannot be retired to reuse its name",
+          4,
+        )
+        await this.state.archive(binding)
+        await this.state.audit("archive", binding.id, "connection_ended")
+      }),
+    )
+  }
+
+  private async createManaged(name: string, ssh?: string): Promise<Binding> {
+    // Use a short path: macOS sockaddr_un is too small for long TMPDIR paths.
+    const socketRoot = await secureDirectory(
+      join("/tmp", `agent-terminal-bridge-${process.getuid?.()}`),
+    )
+    const socket = join(
+      socketRoot,
+      `${digest(`${this.state.root}|${this.config.socketName}`).slice(0, 20)}.sock`,
+    )
+    const configPath = join(this.state.root, "managed.tmux.conf")
+    await checkExistingFile(configPath)
+    await writeFile(
+      configPath,
+      "set -g remain-on-exit on\nset -g history-limit 10000\nset -g default-shell /bin/sh\nset -g status off\nset -g synchronize-panes off\n",
+      { mode: 0o600 },
+    )
+    const id = randomNonce()
+    const sessionName = `atb-${id}`
+    const tmux = new Tmux(socket)
+    const result = await tmux.run([
+      "-f",
+      configPath,
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-s",
+      sessionName,
+      "-x",
+      "160",
+      "-y",
+      "48",
+      ...(ssh ? ["ssh", "-tt", ssh] : ["/bin/sh"]),
+    ])
+    const paneId = result.trim()
+    requireValue(
+      /^%\d+$/.test(paneId),
+      "PROTOCOL_ERROR",
+      "tmux did not create the expected pane",
+      8,
+    )
+    try {
+      return await this.register(
+        name,
+        socket,
+        paneId,
+        "managed",
+        ["read", "exec", "raw_send", "stop"],
+        ssh,
+      )
+    } catch (error) {
+      await tmux.run(["kill-session", "-t", `=${sessionName}`]).catch(() => {})
+      throw error
+    }
   }
 
   async bind(
@@ -255,7 +328,11 @@ export class Sessions {
   }
 
   async verify(binding: Binding, write = false): Promise<Pane> {
-    const stat = await lstat(binding.socketPath).catch(() => null)
+    this.state.requireActive(binding)
+    const stat = await lstat(binding.socketPath).catch((error: unknown) => {
+      if (hasCode(error, "ENOENT") || hasCode(error, "ENOTDIR")) return null
+      throw privatePathError(error)
+    })
     requireValue(
       stat?.isSocket() && stat.uid === process.getuid?.(),
       "BINDING_CHANGED",
@@ -266,8 +343,14 @@ export class Sessions {
     let pane: Pane
     try {
       pane = await tmux.inspect(paneTarget(binding))
-    } catch {
-      throw new BridgeError("BINDING_CHANGED", "Bound pane no longer exists", 4)
+    } catch (error) {
+      if (error instanceof BridgeError && error.code === "TMUX_OBJECT_MISSING")
+        throw new BridgeError(
+          "BINDING_CHANGED",
+          "Bound pane no longer exists",
+          4,
+        )
+      throw error
     }
     requireValue(
       pane.serverInstance === binding.serverInstance &&
@@ -275,7 +358,7 @@ export class Sessions {
         pane.sessionId === binding.sessionId &&
         pane.windowId === binding.windowId &&
         pane.paneId === binding.paneId &&
-        pane.pid === binding.panePid &&
+        (pane.pid === binding.panePid || (pane.dead && pane.pid === 0)) &&
         pane.marker === binding.marker,
       "BINDING_CHANGED",
       "Bound pane identity changed",
@@ -311,6 +394,7 @@ export class Sessions {
   }
 
   requirePermission(binding: Binding, operation: Operation): void {
+    if (operation !== "read") this.state.requireActive(binding)
     requireValue(
       effectivePermissions(
         this.config,
@@ -410,11 +494,41 @@ export class Sessions {
         created_at: item.createdAt,
       })),
     }
+    if (this.state.isHistorical(binding))
+      return {
+        session: name,
+        ...details,
+        lifecycle: "archived",
+        display_state: "archived",
+        binding: "archived",
+        control: "recovery_required",
+        pane: { id: binding.paneId, state: "historical", pid: null },
+        shell: {
+          state: "unknown",
+          profile: null,
+          endpoint_label: null,
+          bash_version: null,
+        },
+        task: { state: task?.state ?? "idle", request_id: task?.id ?? null },
+        permissions: effectivePermissions(
+          this.config,
+          name,
+          binding.permissions,
+        ).filter((value) => value === "read"),
+        next_action: {
+          action: "query_history",
+          session_id: binding.id,
+          requires_confirmation: false,
+          message:
+            "This ID is historical. Query old request IDs here; terminal operations require the current connection's ID.",
+        },
+      }
     try {
       const pane = await this.verify(binding)
       return {
         session: name,
         ...details,
+        lifecycle: "active",
         display_state: pane.dead ? "connection_ended" : displayState,
         next_action: pane.dead
           ? {
@@ -422,7 +536,7 @@ export class Sessions {
               session_id: binding.id,
               requires_confirmation: true,
               message:
-                "The local connection process exited. Resolve unknown requests, then explicitly create a new connection.",
+                "The local connection process exited. Use r in the connect view to explicitly reconnect with a new session_id; old unknown requests remain unchanged.",
             }
           : nextAction,
         binding: "valid",
@@ -457,6 +571,39 @@ export class Sessions {
       }
     } catch (error) {
       if (
+        error instanceof BridgeError &&
+        ["LOCAL_ACCESS_DENIED", "PROCESS_IDENTITY_UNKNOWN"].includes(error.code)
+      )
+        return {
+          ok: false,
+          session: name,
+          ...details,
+          lifecycle: "active",
+          display_state:
+            error.code === "LOCAL_ACCESS_DENIED"
+              ? "access_denied"
+              : "inspection_failed",
+          binding: "unverified",
+          control: binding.control,
+          pane: { id: binding.paneId, state: "unknown", pid: null },
+          shell: {
+            state: "unknown",
+            profile: null,
+            endpoint_label: null,
+            bash_version: null,
+          },
+          task: { state: task?.state ?? "idle", request_id: task?.id ?? null },
+          permissions: [],
+          error: { code: error.code, message: error.message, retryable: false },
+          next_action: {
+            action: "inspect_local_access",
+            session_id: binding.id,
+            requires_confirmation: true,
+            message:
+              "Run doctor for this session and grant the required local filesystem, Unix socket and process inspection access.",
+          },
+        }
+      if (
         !(error instanceof BridgeError) ||
         !["BINDING_CHANGED", "PROCESS_MISSING"].includes(error.code)
       )
@@ -470,7 +617,7 @@ export class Sessions {
           session_id: binding.id,
           requires_confirmation: true,
           message:
-            "Resolve any unknown request, then explicitly create a new connection.",
+            "Open connect for this session, then explicitly choose r to reconnect with a new session_id. Old unknown requests remain unchanged.",
         },
         binding: "stale",
         pane: { id: binding.paneId, state: "missing", pid: null },
@@ -708,7 +855,7 @@ export class Sessions {
           )
             throw error
         }
-        await this.state.remove(name)
+        await this.state.archive(binding)
         await this.state.audit("unbind", binding.id, "revoked")
         return { session: name, unbound: true }
       }),

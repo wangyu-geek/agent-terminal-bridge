@@ -39,6 +39,12 @@ export class TerminalRenderer {
     this.sequence = ""
     return this.value
   }
+  drain(): string {
+    const value = this.value
+    this.value = ""
+    this.bytes = 0
+    return value
+  }
   private consume(text: string): void {
     for (const char of text) {
       if (this.mode !== "text") {

@@ -54,7 +54,7 @@ Bridge 提供统一 CLI，让用户与 Agent 访问预先纳入管理的同一�
 | 终端后端 | tmux，复用已有会话管理、PTY 和人工 attach 能力 |
 | 计划支持下限 | tmux >=3.2；发布前必须在下限版本与发布时选定的稳定版本上验证实际使用的能力 |
 | 连接方式 | 用户现有 SSH 配置；SSH ControlMaster 为可选优化 |
-| 人工客户端 | 任意兼容 tmux 的终端模拟器，iTerm2 仅作为使用示例 |
+| 人工客户端 | 默认 connect 使用本地文本视图与终端原生滚动/复制；高级 attach 为原生 tmux 客户端；iTerm2 仅为示例 |
 | 远端执行配置 | bash-v1 要求实际目标 Bash >=3.2 与 base64/tr；完整版本在握手中检测，平台与版本矩阵以验证记录为准 |
 | Agent 接口 | CLI、版本化 JSON、能力查询；特定 Agent 适配放在示例层 |
 | 配置与测试 | JSON 应用配置、运行时校验；bun:test 直接运行 .test.ts |
@@ -88,7 +88,7 @@ Bridge 通过 Bun.spawn 获取这些文字并返回文本或 JSON，纯文本模
 | pipe-pane | 可选的后续替代实现 | 每个 pane 只有一个 pipe，必须检测占用，不能覆盖用户已有采集 |
 | 自建 PTY 管理器 | 暂不实现 | 需要重新实现会话保持、人工接入、尺寸同步及终端处理 |
 
-主路径确定为：`capture` 使用 capture-pane，`exec` 使用任务期间的 control-mode 客户端。首期不同时维护两套连续输出后端。
+主路径确定为：`capture` 使用 capture-pane，`exec` 使用任务期间的 control-mode 客户端，`connect` 使用观察期间的独立 control-mode 文本视图。首期不同时维护两套连续输出后端。
 
 Control mode 的 `%end` 只表示 tmux 命令已处理完成。例如 send-keys 成功不等于远端命令执行完成；远端完成状态由第 7 节的 shell 协议提供。
 
@@ -154,7 +154,7 @@ flowchart TD
 
 ### 4.1 CLI 命令
 
-统一使用 `remote-terminal`，默认 Bridge 会话别名为 `remote`，不使用公司堡垒机名作为默认值。
+统一使用 `remote-terminal`。正常 connect 的默认显示名来自用户提供的 SSH 配置别名；高级 start/bind 等旧入口继续使用配置中的默认别名 remote。
 
 | 命令 | 功能 | 阶段 |
 |---|---|---|
@@ -216,7 +216,17 @@ exec ssh -tt bastion
 
 Bridge 不自动输入认证信息，不增加未授权的连接路径，不默认改变 SSH 审计、终端类型、语言或 ControlMaster 配置。
 
-### 4.4 绑定身份与范围
+### 4.4 连接选择与名称历史
+
+connect SSH_ALIAS 按 active bindings 中的 sshAlias 精确查找：唯一存活连接返回原 ID，多条存活连接由用户选择；--new 创建额外连接并自动分配名称。显式 --session NAME 仅在名称的入口与请求入口一致时复用，其他/未知入口不认领。端点自报名称不作为此索引，也不据此自动授权任务。
+
+默认显示名将 SSH 入口中的点号转换为连字符，并在名称占用时增加编号；SSH 参数与连接索引始终保留原始入口，不因显示名转换而合并不同入口。
+
+前台窗口关闭仅脱离；SSH 保留时再次连接沿用 ID。已结束对象经资源锁→registry 锁二次验证后，先写入私有 history/<session_id>.json，再移除当前 bindings/<alias-hash>.json 索引；之后可用同名创建新 ID。并发选择/创建另按 SSH 入口加本地锁，不能按超时抢占锁。目录项同步和先存历史保证崩溃时最多留下可核对的重复副本，不丢失旧 ID。
+
+旧 ID 的 status 和 request 读取历史绑定及原请求元数据，list --history 可查看历史。所有终端/恢复写入拒绝 ARCHIVED_SESSION；名称重新使用不改变旧请求，也不把已解析的旧 ID 静默指向新连接。旧 bindings 文件无需批量迁移，历史目录首次归档才创建；取消绑定也保留只读历史。
+
+### 4.5 绑定身份与范围
 
 Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户其他会话的输入同步、插件或目标选择影响。默认不修改用户的全局 tmux 配置。
 
@@ -300,11 +310,13 @@ status 是只读操作，不发送探测、不按回车、不进行 shell 初始
 - `attach` 默认以只读客户端进入；`--writable` 需要 human 模式。
 - 交接给 Agent 前，检查已知人工客户端是否可切为只读，并记录原先客户端标志。
 - 交接前由用户确认当前为无残留输入的空白 shell 提示符；不得自动发送 Ctrl+U 等按键清理一个未知程序的输入。
-- Bridge 支持的观察客户端在 Agent 模式保持只读。检测到新增可写客户端或已知的外部写入风险时拒绝新的 exec，并撤销当前结果的可靠性声明。
+- 默认 connect 的 control-mode 文本视图在每批人工输入前持资源锁核对绑定和 human 模式；Agent/准备期间输入被拒绝，不排队等待后发送。原生 attach 的观察客户端在 Agent 模式保持只读。检测到新增可写客户端或已知的外部写入风险时拒绝新的 exec，并撤销当前结果的可靠性声明。
 - 交接回用户时不得自动给运行中的程序插入输入。存在任务时返回 BUSY，或者由用户显式进入接管/恢复流程。
 - 异常时保留 recovery_required，同时提供有记录的人工接管入口，不能让用户因遗留锁状态而无法排查。
 
 切换客户端标志时只操作对应会话的明确客户端。返回人工模式时恢复 Bridge 修改的标志，不能将原本只读的客户端升级为可写。任务运行中的中断与接管通过第 8.1 节的协作控制请求处理，不能与 exec 争抢同一把长事务锁后永久返回 BUSY。
+
+本地查看不等于远端输入权限。默认 connect 不占用备用屏幕或鼠标，显示命令原文、帧内实时输出和退出码；Agent/恢复模式下按 ? 可打开菜单，Ctrl+] 兼容单字节、CSI u/Kitty/modifyOtherKeys 并可在人工模式打开菜单；菜单提供接管/脱离，输入权限变化不影响滚动、选择或复制。普通状态切换仅重置鼠标与文字样式，不发送 1049l 恢复旧光标。接管或返回人工视图后，从当前 tmux pane 读取一致的输入行和 cursor_x，以本地横向定位投影到记录下方；不向远端补发 Enter、清理输入或猜测提示符，字符宽度使用 tmux 的实际单元格列位置。SSH 本地进程退出或绑定失效后提示 r 显式新建同入口连接，在同一窗口手工认证，同名生成新 ID 并保留旧 ID 历史；旧请求未知记录不改写，不自动确认旧结果或重放命令。
 
 客户端只读不能阻止同一用户使用其他 tmux CLI 发送输入，也无法检测所有人工干预。可靠执行以遵守交接约定为前提；无法保证独占时返回不确定状态，不能宣称强互斥。
 
@@ -447,6 +459,8 @@ __atb_<binding_nonce> run <request_nonce> <base64_payload>
 - 单个帧上限为 8192 字节，限制不完整帧缓冲；probe 的 hostname/user/cwd 等字段也必须在编码前限制长度，超出时拒绝确认，避免恶意或异常输出导致内存增长。
 - 首期不依赖提示符正则、终端标题、固定 sleep 或 OSC 133 来判断远端完成。
 
+命令开始前，helper 额外输出展示帧 `RS ATBV1|binding_nonce|request_nonce|COMMAND|base64_script US`。它使用独立 ATBV1 前缀，原执行解析器在 BEGIN 前忽略它，既不改变 terminal_output 也不能建立完成；不要求旧执行器理解新展示帧。默认 connect 观察器校验标识与有界载荷，仅用于显示命令原文，隐藏 readline 与初始化回显，输出状态仍以任务记录为准。展示内容只进入终端，不写状态/审计文件。
+
 随机标识用于关联与降低偶然冲突，不能防御知晓协议的恶意目标伪造结果。
 
 初始化验证完整链路保留 RS/US 等协议字节；若 SSH、堡垒机或终端过滤使帧无法通过，则该环境不支持 bash-v1，不退回不可靠的普通文本子串匹配。
@@ -457,7 +471,7 @@ __atb_<binding_nonce> run <request_nonce> <base64_payload>
 2. 在同一受控命令队列中确认订阅生效后才发送函数调用；不得先发命令再开始捕获。
 3. 正确解码 `%output` 的转义字节，只处理授权目标 pane，不持久化其他 pane 内容。
 4. 无法保证不接收其他 pane 输出的多 pane session，首期不开放 exec；用户应使用专用单 pane 会话。低层绑定仍可用于授权 pane 的快照读取。
-5. control-mode 客户端不设置会影响人工客户端的终端尺寸，也不获取人工输入。
+5. 执行订阅客户端忽略尺寸且不获取人工输入。默认 connect 观察器作为实际人工视图设置尺寸，尺寸变化不撤销单 pane 身份；布局增加/替换/移动 pane 仍中止执行。
 6. 将 tmux 命令处理结果、生命周期事件和 shell 执行帧分别解析。
 7. 对累计保留的展示文本设置上限；到达上限后继续排空输出并解析结束帧，不能因截断而停止读取。
 8. 控制连接退出、协议无法继续或收到无法恢复的输出丢失通知时，将结果设为 unknown；不能用屏幕快照补成“完整输出”。
@@ -670,7 +684,14 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
     "session_id_selection": true,
     "ready": true,
     "takeover": true,
-    "resume": true
+    "resume": true,
+    "terminal_view": true,
+    "command_display": true,
+    "local_reconnect": true,
+    "local_menu_help": true,
+    "connection_reuse": true,
+    "session_history": true,
+    "local_access_diagnostics": true
   },
   "shell_profiles": ["bash-v1"],
   "requires_local_socket_access": true,
@@ -679,6 +700,8 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
 ```
 
 如果宿主没有本地命令执行能力，可后续增加独立的 stdio 适配层，但不将其作为核心依赖，也不默认暴露 HTTP 监听端口。
+
+本地权限诊断通过 doctor 返回 state_read/state_write、tmux_socket、process_identity 与 required_access。LOCAL_ACCESS_DENIED 返回退出码 5；status 将绑定标为 unverified、状态为 access_denied，给出本地授权动作，不转为 connection_ended。PROCESS_IDENTITY_UNKNOWN 等未能完成的检查保持 inspection_failed。真正对象缺失仍返回失效状态，exec 遇到任何未核实状态均拒绝继续。仅向有权限的本地临时文件写入探针，不探测远端登录界面。命令级授权与后续按 session 受控接口设计见 [沙箱接入](docs/sandbox-access.md)。
 
 ## 11. 配置、权限与数据保护
 
@@ -761,6 +784,7 @@ agent-terminal-bridge/
 ├── README.md
 ├── LICENSE
 ├── CONTRIBUTING.md
+├── Makefile
 ├── SECURITY.md
 ├── Solution.md
 ├── package.json
@@ -804,6 +828,8 @@ agent-terminal-bridge/
 
 开发脚本提供 dev、lint、typecheck、check、test:unit、test:integration、test、build 和 build:bin。check 为只读的格式/静态检查与类型检查；测试直接运行 .test.ts，无需单独的测试编译目录。构建返回 success=false 时必须报告失败，不能仅等待 Bun.build 返回就宣称构建成功。
 
+源码仓库的 Makefile 为现有 Bun 命令提供薄封装，默认显示 help，支持 BUN 与 ARGS；完整映射见 CONTRIBUTING.md。package.json 保持命令行为的单一依据。
+
 typecheck 调用 `bun run --bun tsc --noEmit`，使用已安装的锁定版本编译器，避免 tsc 的 Node shebang 引入额外运行时要求；lint 调用 Biome 的只读检查，check 组合这两项。开发脚本不使用会在依赖缺失时隐式联网安装工具的临时执行方式。
 
 分发分为两条路径：
@@ -828,6 +854,8 @@ typecheck 调用 `bun run --bun tsc --noEmit`，使用已安装的锁定版本�
 各宿主可使用其支持的说明文件加载以下规则，核心 CLI 不自动识别 Agent 品牌或写入宿主配置：
 
 随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。默认帮助只展示 connect/status/takeover/resume，完整命令通过 --help --advanced 或 JSON 帮助查询。
+
+skill 仅面向当前 CLI 的 session_id 流程，不维护旧版兼容分支。实际安装缺少本次操作所需能力时，停止并提示更新 CLI；能力与会话权限检查仍然保留。
 
 1. 先查询 capabilities 与 status，使用实际实现的能力。
 2. 仅操作用户明确授权的 Bridge 会话。

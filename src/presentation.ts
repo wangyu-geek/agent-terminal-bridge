@@ -5,13 +5,14 @@ export function humanResult(result: object): string {
     return [
       "remote-terminal — shared terminal for you and your Agent",
       "",
-      "  connect SSH_ALIAS   Open a terminal and log in manually",
+      "  connect SSH_ALIAS   Return to its connection, or open one and log in",
       "  connect             Return to an existing shared terminal",
       "  status              Show the current state and next step",
       "  takeover            Return input control to you",
       "  resume              Continue after you have inspected the shell",
       "",
       "After login, tell your Agent: Login is complete; take over and use the shared terminal for my task.",
+      "In connect: scroll/select/copy normally; While Agent controls input, ? opens takeover/exit; Ctrl+] also opens the local menu. After disconnect: r reconnects with manual login and a new session_id.",
       "Use --help --advanced for all commands; --json for the machine interface.",
       ...("advanced" in result && result.advanced
         ? ["", `All commands: ${result.commands.join(", ")}`]
@@ -30,6 +31,10 @@ export function humanResult(result: object): string {
       running: "Command is running",
       needs_human: "Needs human inspection; the remote outcome may be unknown",
       connection_ended: "Connection ended or binding changed",
+      archived: "Historical session; request metadata is read-only",
+      access_denied: "Local access denied; connection health is unverified",
+      inspection_failed:
+        "Local inspection failed; connection health is unverified",
     }
     const next =
       "next_action" in result &&
@@ -53,7 +58,20 @@ export function humanResult(result: object): string {
     ].join("\n")
   }
   if ("local_environment" in result)
-    return `Local: ${fields(result.local_environment)}\nTarget: ${"target_environment" in result ? fields(result.target_environment) : "not checked"}`
+    return [
+      `Local: ${fields(result.local_environment)}`,
+      `Target: ${"target_environment" in result ? fields(result.target_environment) : "not checked"}`,
+      ...("local_access" in result &&
+      typeof result.local_access === "object" &&
+      result.local_access !== null
+        ? [
+            "Local access:",
+            ...Object.entries(result.local_access).map(
+              ([key, value]) => `  ${key}: ${fields(value)}`,
+            ),
+          ]
+        : []),
+    ].join("\n")
   if ("ready" in result && result.ready)
     return `Session ${"session_id" in result ? result.session_id : ""} is ready for the authorized task.`
   if ("taken_over" in result && result.taken_over)
@@ -66,6 +84,7 @@ export function humanResult(result: object): string {
 function fields(value: unknown): string {
   if (value === null) return "not checked"
   if (typeof value !== "object") return String(value)
+  if (Array.isArray(value)) return value.map(fields).join(", ")
   return Object.entries(value)
     .map(
       ([key, item]) =>
@@ -75,6 +94,10 @@ function fields(value: unknown): string {
 }
 
 export function errorNextStep(code: string): string {
+  if (code === "LOCAL_ACCESS_DENIED" || code === "PROCESS_IDENTITY_UNKNOWN")
+    return "Run remote-terminal doctor --session-id ID. Grant the reported local Bridge resources for the invocation, then retry inspection."
+  if (code === "ARCHIVED_SESSION")
+    return "Query old request IDs with this historical session_id; use list to select the current connection for terminal operations."
   if (code === "TTY_REQUIRED")
     return "Open a real local terminal and run remote-terminal connect SSH_ALIAS."
   if (code === "DEPENDENCY_MISSING")
@@ -88,7 +111,7 @@ export function errorNextStep(code: string): string {
       "SESSION_SELECTION_REQUIRED",
     ].includes(code)
   )
-    return "Run remote-terminal list and select the exact session_id, or create a connection with a new --session name."
+    return "Run connect SSH_ALIAS to return to its connection, list to select an exact session_id, or connect SSH_ALIAS --new for another connection."
   if (
     [
       "RECOVERY_REQUIRED",

@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
 import { chmod, mkdir, unlink } from "node:fs/promises"
 import { join } from "node:path"
+import { DirectoryLock } from "../../src/locking.ts"
+import { resourceKey } from "../../src/state.ts"
 import { Tmux } from "../../src/tmux.ts"
 import { Fixture, root } from "../helpers.ts"
 
@@ -20,7 +22,7 @@ async function fakeSsh() {
   const ssh = join(bin, "ssh")
   await Bun.write(
     ssh,
-    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ATB_FIXTURE_ARGS"\nexec /bin/bash --noprofile --norc\n',
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ATB_FIXTURE_ARGS\"\nPS1='fixture-ready> '; export PS1\nexec /bin/bash --noprofile --norc\n",
   )
   await chmod(ssh, 0o755)
   fixture.env.PATH = `${bin}:${fixture.env.PATH ?? ""}`
@@ -49,7 +51,7 @@ integration(
       owner.process.terminal?.write("2\r")
       await until(async () =>
         (await new Tmux(second.socketPath).clients(second.sessionId)).some(
-          (client) => !client.control && !client.readonly,
+          (client) => client.control,
         ),
       )
       expect(
@@ -83,7 +85,12 @@ integration(
     holder.kill("SIGKILL")
     await holder.exited
     reader.releaseLock()
-    const owner = terminal(fixture, ["connect", "bastion-example"])
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
     try {
       await until(async () =>
         owner.output().includes("Recover its verified abandoned setup locks"),
@@ -131,6 +138,350 @@ function terminal(fixture: Fixture, args: string[]) {
   )
   return { process, output: () => output }
 }
+
+integration(
+  "the local view streams readable commands, blocks remote typing, resizes and takes over locally",
+  async () => {
+    const fixture = await fakeSsh()
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
+    try {
+      await until(
+        async () =>
+          owner.output().includes("[You control input]") &&
+          owner.output().includes("fixture-ready> "),
+      )
+      const binding = await fixture.binding()
+      fixture.sockets.add(binding.socketPath)
+      // The user must actually reach an idle shell before ready; the local
+      // "finish login" banner is intentionally not a remote readiness signal.
+      owner.process.terminal?.write("printf 'fixture-login-complete\\n'\r")
+      await until(async () =>
+        owner
+          .output()
+          .split(/[\r\n]+/)
+          .includes("fixture-login-complete"),
+      )
+      const prepared = await fixture.cli([
+        "ready",
+        "--session-id",
+        binding.id,
+        "--confirm",
+        "--timeout",
+        "3",
+        "--json",
+      ])
+      if (prepared.code !== 0) {
+        const snapshot = await fixture.cli(["capture", "--json"])
+        throw new Error(
+          JSON.stringify({
+            prepared,
+            binding: await fixture.binding(),
+            output: owner.output(),
+            capture: snapshot.result.terminal_output,
+          }),
+        )
+      }
+      const command =
+        "printf 'live-result\\n'; sleep 2; printf 'still-running-after-takeover\\n'"
+      const child = fixture.spawnCli([
+        "exec",
+        "--session-id",
+        binding.id,
+        "--request-id",
+        "visible-command",
+        "--timeout",
+        "8",
+        "--json",
+        command,
+      ])
+      const result = new Response(child.stdout).text()
+      const errors = new Response(child.stderr).text()
+      await until(async () => owner.output().includes("live-result\r\n"))
+      expect(owner.output()).toContain(`$ ${command}`)
+      expect(owner.output()).not.toContain("__atb_")
+      expect(owner.output()).not.toContain("ATB1|")
+      expect(owner.output()).not.toContain("\x1b[?1049h")
+      expect(owner.output()).not.toContain("\x1b[?1000h")
+      expect(child.exitCode).toBeNull()
+      owner.process.terminal?.resize(100, 30)
+      owner.process.terminal?.write("printf forbidden-human-input\\n\r")
+      await until(async () => owner.output().includes("[Input blocked"))
+      await Bun.sleep(100)
+      expect(child.exitCode).toBeNull()
+      owner.process.terminal?.write("\x1d")
+      await until(async () => owner.output().includes("[Local menu]"))
+      owner.process.terminal?.write("t")
+      await until(async () =>
+        owner.output().includes("[Input returned to you]"),
+      )
+      const response = JSON.parse(await result)
+      expect(await child.exited).toBe(9)
+      expect(await errors).toBe("")
+      expect(response.execution_state).toBe("unknown")
+      expect((await fixture.binding()).control).toBe("human")
+      await fixture.untilCapture((output) =>
+        output.split("\n").includes("still-running-after-takeover"),
+      )
+      expect(owner.output()).not.toContain("ATB1|")
+      const captured = await fixture.cli(["capture", "--json"])
+      expect(captured.result.terminal_output).not.toContain(
+        "forbidden-human-input",
+      )
+      owner.process.terminal?.write("printf 'manual-after-takeover\\n'\r")
+      await fixture.untilCapture((output) =>
+        output.split("\n").includes("manual-after-takeover"),
+      )
+    } finally {
+      await close(owner)
+    }
+  },
+  20000,
+)
+
+integration(
+  "extended Ctrl+] and the ordinary help key open local controls without changing terminal settings",
+  async () => {
+    const fixture = await fakeSsh()
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
+    try {
+      await until(
+        async () =>
+          owner.output().includes("[You control input]") &&
+          owner.output().includes("fixture-ready> "),
+      )
+      const binding = await fixture.binding()
+      fixture.sockets.add(binding.socketPath)
+      expect(
+        (await fixture.cli(["ready", "--confirm", "--timeout", "3", "--json"]))
+          .code,
+      ).toBe(0)
+      for (const sequence of [
+        "\x1b[93;5u",
+        "\x1b[93;5:1u",
+        "\x1b[27;5;93~",
+        "\x1d",
+        "\x1b[47:63;2u",
+        "?",
+      ]) {
+        const opened = owner.output().split("[Local menu]").length
+        for (const char of sequence) {
+          owner.process.terminal?.write(char)
+          await Bun.sleep(2)
+        }
+        await until(
+          async () =>
+            owner.output().split("[Local menu]").length === opened + 1,
+        )
+        const continued = owner.output().split("[Viewing resumed]").length
+        owner.process.terminal?.write("\x1b[99u")
+        await until(
+          async () =>
+            owner.output().split("[Viewing resumed]").length === continued + 1,
+        )
+      }
+      const opened = owner.output().split("[Local menu]").length
+      owner.process.terminal?.write("\x1b[93;5:3u")
+      await Bun.sleep(150)
+      expect(owner.output().split("[Local menu]").length).toBe(opened)
+      owner.process.terminal?.write("?")
+      await until(
+        async () => owner.output().split("[Local menu]").length === opened + 1,
+      )
+      owner.process.terminal?.write("\x1b[116;1u")
+      await until(async () =>
+        owner.output().includes("[Input returned to you]"),
+      )
+      expect((await fixture.binding()).control).toBe("human")
+      owner.process.terminal?.write("printf 'human-question?\\n'\r")
+      await fixture.untilCapture((output) =>
+        output.split("\n").includes("human-question?"),
+      )
+      expect(owner.output().split("[Local menu]").length).toBe(opened + 1)
+      owner.process.terminal?.write(
+        "read -r -s -n 1 key; printf 'escape-value:%d\\n' \"'$key\"\r",
+      )
+      await fixture.untilCapture((output) => output.includes("escape-value:%d"))
+      owner.process.terminal?.write("\x1b")
+      await fixture.untilCapture((output) =>
+        output.split("\n").includes("escape-value:27"),
+      )
+      owner.process.terminal?.write("\x1b[93;5u")
+      await until(
+        async () => owner.output().split("[Local menu]").length === opened + 2,
+      )
+      owner.process.terminal?.write("\x1b[113u")
+      expect(await owner.process.exited).toBe(0)
+    } finally {
+      await close(owner)
+    }
+  },
+  20000,
+)
+
+integration(
+  "typing during a pending local takeover is discarded instead of deferred into the shell",
+  async () => {
+    const fixture = await fakeSsh()
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
+    let held: DirectoryLock | undefined
+    try {
+      await until(
+        async () =>
+          owner.output().includes("[You control input]") &&
+          owner.output().includes("fixture-ready> "),
+      )
+      const binding = await fixture.binding()
+      fixture.sockets.add(binding.socketPath)
+      expect(
+        (await fixture.cli(["ready", "--confirm", "--timeout", "3", "--json"]))
+          .code,
+      ).toBe(0)
+      held = await DirectoryLock.acquire(
+        join(fixture.statePath, "locks"),
+        resourceKey(binding),
+      )
+      owner.process.terminal?.write("\x1d")
+      await until(async () => owner.output().includes("[Local menu]"))
+      owner.process.terminal?.write("t")
+      await until(async () =>
+        owner.output().includes("[Returning input control"),
+      )
+      owner.process.terminal?.write("printf should-never-be-deferred\r")
+      await Bun.sleep(80)
+      await held.release()
+      held = undefined
+      await until(async () =>
+        owner.output().includes("[Input returned to you]"),
+      )
+      owner.process.terminal?.write("printf 'new-human-input\\n'\r")
+      const capture = await fixture.untilCapture((output) =>
+        output.split("\n").includes("new-human-input"),
+      )
+      expect(capture).not.toContain("should-never-be-deferred")
+    } finally {
+      await held?.release()
+      await close(owner)
+    }
+  },
+  15000,
+)
+
+integration(
+  "a dead SSH connection offers explicit reconnect in the same terminal, with a new ID and unchanged unknown request",
+  async () => {
+    const fixture = await fakeSsh()
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
+    try {
+      await until(
+        async () =>
+          owner.output().includes("[You control input]") &&
+          owner.output().includes("fixture-ready> "),
+      )
+      const old = await fixture.binding()
+      fixture.sockets.add(old.socketPath)
+      expect(
+        (
+          await fixture.cli([
+            "ready",
+            "--session-id",
+            old.id,
+            "--confirm",
+            "--json",
+          ])
+        ).code,
+      ).toBe(0)
+      const timedOut = await fixture.cli([
+        "exec",
+        "--session-id",
+        old.id,
+        "--request-id",
+        "old-unknown",
+        "--timeout",
+        "1",
+        "--json",
+        "sleep 2; printf old-effect",
+      ])
+      expect(timedOut.result.execution_state).toBe("unknown")
+      process.kill(old.panePid, "SIGKILL")
+      await until(async () =>
+        owner.output().includes("[r] Reconnect in this window"),
+      )
+      expect(
+        (await fixture.cli(["list", "--json"])).result.sessions,
+      ).toHaveLength(1)
+      expect(owner.process.exitCode).toBeNull()
+      const reconnectStart = owner.output().length
+      owner.process.terminal?.write("r")
+      let nextId = ""
+      let nextAlias = ""
+      await until(async () => {
+        const entries = (await fixture.cli(["list", "--json"])).result.sessions
+        if (!Array.isArray(entries)) return false
+        const next = entries.find((entry) => entry.session_id !== old.id)
+        if (!next) return false
+        nextId = String(next.session_id)
+        nextAlias = String(next.session)
+        return owner.output().includes(`session_id=${nextId}`)
+      })
+      expect(nextId).not.toBe(old.id)
+      const next = await fixture.binding(nextAlias)
+      expect(next.sshAlias).toBe("bastion-example")
+      expect(next.control).toBe("human")
+      expect(next.shell.state).toBe("uninitialized")
+      expect((await fixture.binding()).id).toBe(nextId)
+      const historical = await fixture.cli([
+        "request",
+        "--session-id",
+        old.id,
+        "--request-id",
+        "old-unknown",
+        "--json",
+      ])
+      expect(historical.result.execution_state).toBe("unknown")
+      expect(historical.result.completed).toBe(false)
+      await until(
+        async () =>
+          owner
+            .output()
+            .slice(reconnectStart)
+            .includes("[You control input]") &&
+          owner.output().slice(reconnectStart).includes("fixture-ready>"),
+      )
+      owner.process.terminal?.write("printf 'reconnected-manual-input\\n'\r")
+      await fixture.untilCapture(
+        (output) => output.split("\n").includes("reconnected-manual-input"),
+        nextAlias,
+      )
+      expect(
+        (await fixture.cli(["status", "--session-id", old.id, "--json"])).result
+          .display_state,
+      ).toBe("archived")
+    } finally {
+      await close(owner)
+    }
+  },
+  20000,
+)
 async function close(owner: ReturnType<typeof terminal>) {
   if (owner.process.exitCode === null) owner.process.kill("SIGTERM")
   owner.process.terminal?.close()
@@ -149,7 +500,12 @@ integration(
   "connect rejects a non-TTY before creating an unseen SSH connection",
   async () => {
     const fixture = await fakeSsh()
-    const result = await fixture.cli(["connect", "bastion-example"])
+    const result = await fixture.cli([
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
     expect(result.code).toBe(5)
     expect(result.stderr).toContain("real terminal")
     expect((await fixture.cli(["list", "--json"])).result.sessions).toEqual([])
@@ -160,10 +516,46 @@ integration(
 )
 
 integration(
+  "returning to a missing managed pane still exposes the local recovery menu",
+  async () => {
+    const fixture = await fakeSsh()
+    expect(
+      (await fixture.cli(["start", "--ssh", "bastion-example", "--json"])).code,
+    ).toBe(0)
+    const binding = await fixture.binding()
+    await fixture.tmux(binding.socketPath, [
+      "kill-session",
+      "-t",
+      binding.sessionId,
+    ])
+    const owner = terminal(fixture, ["connect", "--session-id", binding.id])
+    try {
+      await until(async () =>
+        owner.output().includes("[r] Reconnect in this window"),
+      )
+      expect(owner.output()).toContain(binding.id)
+      expect(
+        (await fixture.cli(["list", "--json"])).result.sessions,
+      ).toHaveLength(1)
+      owner.process.terminal?.write("q")
+      expect(await owner.process.exited).toBe(0)
+    } finally {
+      await close(owner)
+    }
+  },
+  15000,
+)
+
+integration(
   "one connect command exposes session_id and preserves the terminal across handoffs",
   async () => {
     const fixture = await fakeSsh()
-    const owner = terminal(fixture, ["connect", "bastion-example"])
+    const owner = terminal(fixture, [
+      "connect",
+      "bastion-example",
+      "--session",
+      "remote",
+    ])
     try {
       await until(async () => {
         const listed = (await fixture.cli(["list", "--json"])).result.sessions
@@ -174,7 +566,7 @@ integration(
       const tmux = new Tmux(binding.socketPath)
       await until(async () =>
         (await tmux.clients(binding.sessionId)).some(
-          (client) => !client.control && !client.readonly,
+          (client) => client.control,
         ),
       )
       await until(
@@ -194,17 +586,29 @@ integration(
         ]),
       ).toContain(`session_id=${binding.id}`)
       expect(owner.output()).toContain(binding.id)
-      expect(
-        (
-          await fixture.cli([
-            "ready",
-            "--session-id",
-            binding.id,
-            "--confirm",
-            "--json",
-          ])
-        ).result.ready,
-      ).toBe(true)
+      // Session registration precedes the writable view's initial snapshot.
+      // Complete an explicit manual input round trip before handing it over.
+      await until(
+        async () =>
+          owner.output().includes("[You control input]") &&
+          owner.output().includes("fixture-ready> "),
+      )
+      owner.process.terminal?.write("printf 'handoff-ready\\n'\r")
+      await until(async () =>
+        owner
+          .output()
+          .split(/[\r\n]+/)
+          .includes("handoff-ready"),
+      )
+      const prepared = await fixture.cli([
+        "ready",
+        "--session-id",
+        binding.id,
+        "--confirm",
+        "--json",
+      ])
+      if (prepared.code !== 0) throw new Error(prepared.stdout)
+      expect(prepared.result.ready).toBe(true)
       expect(
         (await tmux.clients(binding.sessionId))
           .filter((client) => !client.control)
@@ -234,15 +638,17 @@ integration(
           ])
         ).result.taken_over,
       ).toBe(true)
-      expect(
-        (await tmux.clients(binding.sessionId))
-          .filter((client) => !client.control)
-          .some((client) => !client.readonly),
-      ).toBe(true)
+      expect((await fixture.binding()).control).toBe("human")
       owner.process.terminal?.write("printf 'manual-operation\\n'\r")
-      await fixture.untilCapture((output) =>
-        output.split("\n").includes("manual-operation"),
-      )
+      try {
+        await fixture.untilCapture((output) =>
+          output.split("\n").includes("manual-operation"),
+        )
+      } catch (error) {
+        throw new Error(
+          `${String(error)}\nOwned test view: ${owner.output().slice(-6000)}`,
+        )
+      }
       expect(
         (
           await fixture.cli([
@@ -254,11 +660,9 @@ integration(
           ])
         ).result.ready,
       ).toBe(true)
-      const client = (await tmux.clients(binding.sessionId)).find(
-        (item) => !item.control,
-      )
-      if (!client) throw new Error("The owned terminal client disappeared")
-      await tmux.run(["detach-client", "-t", client.name])
+      owner.process.terminal?.write("\x1d")
+      await until(async () => owner.output().includes("[Local menu]"))
+      owner.process.terminal?.write("q")
       expect(await owner.process.exited).toBe(0)
       expect(
         (await fixture.cli(["status", "--session-id", binding.id, "--json"]))
@@ -271,13 +675,9 @@ integration(
       ])
       try {
         await until(async () =>
-          (await tmux.clients(binding.sessionId)).some((item) => !item.control),
+          (await tmux.clients(binding.sessionId)).some((item) => item.control),
         )
-        expect(
-          (await tmux.clients(binding.sessionId))
-            .filter((item) => !item.control)
-            .every((item) => item.readonly),
-        ).toBe(true)
+        expect(observer.output()).toContain(binding.id)
       } finally {
         await close(observer)
       }
@@ -289,34 +689,70 @@ integration(
 )
 
 integration(
-  "connect asks before reusing an occupied session name",
+  "--new opens a separate SSH session and normal connect asks only when several matching sessions exist",
+  async () => {
+    const fixture = await fakeSsh()
+    const first = terminal(fixture, ["connect", "entry-one"])
+    let second: ReturnType<typeof terminal> | undefined
+    let picker: ReturnType<typeof terminal> | undefined
+    try {
+      await until(async () => first.output().includes("[You control input]"))
+      const a = await fixture.binding("entry-one")
+      fixture.sockets.add(a.socketPath)
+      second = terminal(fixture, ["connect", "entry-one", "--new"])
+      const extra = second
+      await until(async () => extra.output().includes("[You control input]"))
+      const b = await fixture.binding("entry-one-2")
+      expect(b.id).not.toBe(a.id)
+      picker = terminal(fixture, ["connect", "entry-one"])
+      const selection = picker
+      await until(async () =>
+        selection.output().includes("Choose a session number"),
+      )
+      expect(selection.output()).toContain(a.id)
+      expect(selection.output()).toContain(b.id)
+      selection.process.terminal?.write("2\r")
+      await until(async () =>
+        selection.output().includes(`[Bridge entry-one-2] session_id=${b.id}`),
+      )
+      const conflict = terminal(fixture, [
+        "connect",
+        "entry-two",
+        "--session",
+        "entry-one",
+      ])
+      try {
+        expect(await conflict.process.exited).toBe(4)
+        expect(conflict.output()).toContain("another or unknown SSH entry")
+      } finally {
+        await close(conflict)
+      }
+      expect((await fixture.binding("entry-one")).id).toBe(a.id)
+    } finally {
+      if (picker) await close(picker)
+      if (second) await close(second)
+      await close(first)
+    }
+  },
+  20000,
+)
+
+integration(
+  "connect selects its SSH entry instead of an unrelated legacy default name",
   async () => {
     const fixture = await fakeSsh()
     await fixture.cli(["start", "--json"])
     const previous = await fixture.binding()
     const owner = terminal(fixture, ["connect", "another-entry"])
     try {
-      await until(async () =>
-        owner.output().includes("Reuse this exact session"),
-      )
+      await until(async () => owner.output().includes("[You control input]"))
+      const created = await fixture.binding("another-entry")
+      fixture.sockets.add(created.socketPath)
+      expect(created.sshAlias).toBe("another-entry")
+      expect(created.id).not.toBe(previous.id)
       expect((await fixture.binding()).id).toBe(previous.id)
-      expect(
-        await Bun.file(join(fixture.directory, "ssh-arguments")).exists(),
-      ).toBe(false)
-      owner.process.terminal?.write("n\r")
-      await until(async () => owner.output().includes("New session name"))
-      owner.process.terminal?.write("second\r")
-      await until(async () => {
-        try {
-          return (await fixture.binding("second")).sshAlias === "another-entry"
-        } catch {
-          return false
-        }
-      })
-      const second = await fixture.binding("second")
-      fixture.sockets.add(second.socketPath)
-      expect(second.id).not.toBe(previous.id)
-      expect((await fixture.binding()).id).toBe(previous.id)
+      expect(owner.output()).not.toContain("already exists")
+      expect(owner.output()).not.toContain("SESSION_CONFLICT")
       await until(
         async () =>
           await Bun.file(join(fixture.directory, "ssh-arguments")).exists(),
@@ -324,9 +760,23 @@ integration(
       expect(
         await Bun.file(join(fixture.directory, "ssh-arguments")).text(),
       ).toBe("-tt\nanother-entry\n")
+      owner.process.terminal?.write("\x1d")
+      await until(async () => owner.output().includes("[Local menu]"))
+      owner.process.terminal?.write("q")
+      expect(await owner.process.exited).toBe(0)
+      const returned = terminal(fixture, ["connect", "another-entry"])
+      try {
+        await until(async () =>
+          returned.output().includes("[You control input]"),
+        )
+        expect((await fixture.binding("another-entry")).id).toBe(created.id)
+        expect(returned.output()).not.toContain("already exists")
+      } finally {
+        await close(returned)
+      }
     } finally {
       await close(owner)
     }
   },
-  30000,
+  20000,
 )

@@ -444,14 +444,12 @@ export class Workflow {
         retryable: false,
       },
       next_action: {
-        action: needsRecovery
-          ? "acknowledge_unknown_then_reconnect"
-          : "reconnect",
+        action: "reconnect",
         session_id: binding.id,
         requires_confirmation: true,
         message: needsRecovery
-          ? "Acknowledge the old unknown result with resume after inspection, then explicitly create a new connection."
-          : "The old result remains unchanged. Explicitly create a new connection with a new session name.",
+          ? "The old result remains unknown. Use r in the connect view to explicitly create a new connection; inspect the old outcome before repeating any work."
+          : "Use r in the connect view to explicitly create a new connection with a new session_id; the old result remains unchanged.",
       },
     }
   }

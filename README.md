@@ -29,15 +29,15 @@ In your real local terminal, replace `bastion` with an existing SSH configuratio
 remote-terminal connect bastion
 ```
 
-Complete passwords, MFA and server selection yourself. The local Bridge status bar shows the full session_id throughout login; it does not identify or authenticate the remote machine.
+Complete passwords, MFA and server selection yourself. The local Bridge banner shows the full session_id before login; list/status return the same ID. It does not identify or authenticate the remote machine.
 
 When the selected server's shell is idle and ready, tell your Agent:
 
 > 登录好了，可以接管，用共享终端帮我检查磁盘。
 
-The skill reads the single authorized session, calls ready, and executes the requested task. You do not copy initialization code, open a second terminal or type a hostname. With several sessions, provide the session_id from the status bar or choose from the Agent's list.
+The skill reads the single authorized session, calls ready, and executes the requested task. You do not copy initialization code, open a second terminal or type a hostname. With several sessions, provide the session_id from the banner or choose from the Agent's list.
 
-Watch Agent output in the same terminal. Agent ownership makes your previously writable client read-only.
+Watch the actual command text, streaming results and exit status in the same terminal. Scroll with your terminal, drag to select and copy normally. Agent ownership blocks typing to the remote shell; local viewing and controls remain available. The default view uses the terminal's scrollback, not a tmux alternate screen. Initialization and probe traffic stay hidden; output outside command frames is not an execution log.
 
 To return to an existing session later:
 
@@ -45,13 +45,17 @@ To return to an existing session later:
 remote-terminal connect
 ```
 
-Multiple sessions produce a selection prompt. A new connection with an occupied name asks whether to reuse that exact session or choose a new name. Closing an observing client does not close SSH. An existing Agent-controlled session opens read-only.
+`connect SSH_ALIAS` returns to its unique live connection automatically. Several live connections for the same SSH entry produce a selection prompt. Different SSH entries get separate default names; an unrelated legacy `remote` record does not conflict. To open an additional connection, use `remote-terminal connect bastion --new`; the local name is chosen automatically. An explicit `--session NAME` returns to that name only when its recorded SSH entry matches. Closing an observing client does not close SSH. An existing Agent-controlled session opens with remote typing blocked; the local menu is available.
 
 The SSH connection must originate in the Bridge/tmux pane. An SSH process already running in an ordinary terminal cannot be adopted. tmux preserves the local terminal, not a remote connection across network failure.
 
 ## Take back control and continue
 
-Tell your Agent “把这个会话交回我”. The takeover coordinator waits for actual ownership transfer; it does not automatically interrupt a running remote program.
+While the Agent controls input, press **?**, then **t** (no Enter required) to take over in the same window. **Ctrl+]** also opens the local menu in either ownership mode. You can also tell your Agent “把这个会话交回我”. The coordinator waits for actual ownership transfer; it does not automatically interrupt a running remote program. **? → q** (Agent mode) or **Ctrl+] → q** detaches the view and leaves SSH running; **c** continues viewing.
+
+The ? shortcut is available in newly opened views from this version; replacing the executable does not update an already running view. In human mode ? remains normal remote input. If a shortcut fails, ask the Agent to return the selected session through CLI takeover.
+
+After takeover, the view appends a fresh local projection of the current terminal input row below the Agent transcript. It sends no newline to the remote program. You can type and edit immediately without moving the input down manually.
 
 Inspect and handle the terminal yourself. Then say:
 
@@ -61,13 +65,15 @@ The Agent uses resume to record recovery and prepare the shell again. The same s
 
 After timeout, disconnection or uncertain initialization, a remote task may still run. Inspect it before resuming. Unknown commands are never automatically retried, reconnected or sent Ctrl+C. Old unknown results remain unknown after recovery.
 
-If the connection itself is gone, takeover reports connection_ended with taken_over=false. After you acknowledge the old unknown outcome, resume records recovery but returns ready=false (exit 4). Explicitly create a new connection with a new name; the old session_id never redirects to it.
+If the SSH process exits, the local view displays **Connection ended** and offers **r** to reconnect in the same window, or **q** to exit. Pressing r explicitly creates a connection to the same SSH entry with a new session_id, reusing its display name after preserving the old ID in read-only history. Complete passwords/MFA/target selection yourself, then hand over the new session. The old ID and unknown requests remain unchanged; no old command is replayed. An SSH process that is still alive but unresponsive is not declared disconnected: use Ctrl+] to detach/take over and inspect it.
 
-Without an Agent, use `takeover` and `resume` in a real terminal or with an explicitly reviewed `--confirm`. The no-second-terminal workflow is designed for a human paired with a local-CLI-capable Agent.
+The CLI takeover/resume interfaces still return connection_ended with taken_over/ready=false (exit 4) for the old connection. resume can acknowledge old unknown history but cannot revive that connection.
+
+Without an Agent, use `takeover` and `resume` in a real terminal or with an explicitly reviewed `--confirm`. The local menu also provides takeover without a second terminal. The advanced native tmux attach command retains its original full-screen/read-only behavior; use connect for the normal view.
 
 ## Agent interface
 
-The skill checks actual capabilities before using the new flow. For direct integration, replace SESSION_ID with the full ID from list/status and EXEC_ID with a unique ID generated and retained **before submitting that command**:
+The skill supports the current CLI's session_id workflow and checks actual capabilities before acting. Missing required capabilities prompt a CLI update. For direct integration, replace SESSION_ID with the full ID from list/status and EXEC_ID with a unique ID generated and retained **before submitting that command**:
 
 ```bash
 remote-terminal capabilities --json
@@ -99,8 +105,14 @@ Human output gives the state and a next step. JSON includes versioned fields, lo
 
 Use [configuration](examples/config.json) only to change defaults or permissions; the private config file must have mode 0600. Defaults live under the standard XDG config/state locations. State and audit do not store command bodies, terminal output or credentials.
 
+Ended connections release their display names when reopened. Old session IDs remain available through `status --session-id OLD_ID`, `request --session-id OLD_ID --request-id EXEC_ID`, and `list --history --json`; they cannot operate a new terminal. Unknown results stay unknown.
+
+Local sandbox access is diagnosed separately: `doctor --session-id SESSION_ID --json` reports state read/write, Unix socket and process inspection checks. `LOCAL_ACCESS_DENIED` / binding `unverified` means the local process lacks access; it does not establish a disconnection. Ask the Agent host to authorize the reported Bridge invocation/resources. [Sandbox access and scoped interface design](docs/sandbox-access.md). The current shared tmux socket is not an OS boundary between session IDs.
+
 Existing start/bind/attach/shell-init/confirm-shell/handoff/recover/recover-lock interfaces remain available for advanced integrations. [Protocol](docs/execution-protocol.md), [troubleshooting](docs/troubleshooting.md), [security boundaries](SECURITY.md), [development](CONTRIBUTING.md), [remediation evidence](docs/remediation-validation.md).
 
 Non-interactive `--json` stdout contains one JSON object. Exit codes: 0 success; 1 confirmed remote nonzero; 2 invalid input/config; 3 missing dependency/capability; 4 missing/changed binding; 5 permission/confirmation/selection; 6 busy; 7 deadline; 8 local I/O/protocol/state; 9 unknown outcome/recovery required.
+
+For source development, run `make` for shortcuts such as `make deps`, `make check`, `make test`, `make build` and `make build-bin`. [Development commands and argument forwarding](CONTRIBUTING.md).
 
 Implemented in TypeScript + Bun 1.4.2. MIT licensed.

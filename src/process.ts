@@ -1,4 +1,4 @@
-import { BridgeError, hasCode } from "./errors.ts"
+import { accessDenied, BridgeError, hasCode } from "./errors.ts"
 
 export async function runProcess(
   cmd: string[],
@@ -20,6 +20,12 @@ export async function runProcess(
       env: options.env ?? process.env,
     })
   } catch (error) {
+    if (accessDenied(error))
+      throw new BridgeError(
+        "LOCAL_ACCESS_DENIED",
+        "Permission denied starting a required local program; inspect doctor local_access",
+        5,
+      )
     throw new BridgeError(
       hasCode(error, "ENOENT") ? "DEPENDENCY_MISSING" : "LOCAL_IO_ERROR",
       "Cannot start required local program",

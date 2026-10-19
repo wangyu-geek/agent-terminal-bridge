@@ -3,7 +3,9 @@ import { createInterface } from "node:readline/promises"
 import { parseArgs } from "node:util"
 import pkg from "../package.json"
 import { loadConfig } from "./config.ts"
-import { BridgeError, requireValue } from "./errors.ts"
+import { Connections } from "./connections.ts"
+import { diagnose } from "./diagnostics.ts"
+import { accessDenied, BridgeError, requireValue } from "./errors.ts"
 import { Executor, resultExitCode } from "./executor.ts"
 import { inspectDirectoryLock, recoverDirectoryLock } from "./locking.ts"
 import { OPERATIONS } from "./models.ts"
@@ -11,7 +13,8 @@ import { sanitizeText } from "./output.ts"
 import { errorNextStep, humanResult } from "./presentation.ts"
 import { Sessions } from "./session.ts"
 import { State } from "./state.ts"
-import { checkTmux, randomNonce } from "./tmux.ts"
+import { SharedTerminal } from "./terminal.ts"
+import { randomNonce } from "./tmux.ts"
 import { alias, choice, integer } from "./validate.ts"
 import { Workflow } from "./workflow.ts"
 
@@ -33,6 +36,8 @@ const OPTIONS = {
   text: { type: "string" },
   enter: { type: "boolean" },
   writable: { type: "boolean" },
+  new: { type: "boolean" },
+  history: { type: "boolean" },
   to: { type: "string" },
   confirm: { type: "boolean" },
   scope: { type: "string" },
@@ -46,14 +51,14 @@ const COMMON = ["json", "help", "config", "session", "session-id"]
 const COMMAND_OPTIONS: Record<string, string[]> = {
   doctor: [],
   capabilities: [],
-  connect: [],
+  connect: ["new"],
   ready: ["confirm", "expected-host", "timeout"],
   takeover: ["confirm", "timeout"],
   resume: ["confirm", "expected-host", "timeout"],
   start: ["ssh"],
   bind: ["socket", "pane", "permissions", "confirm"],
   unbind: ["confirm"],
-  list: [],
+  list: ["history"],
   status: ["pane"],
   capture: ["lines", "screen", "pane"],
   send: ["raw", "text", "enter", "pane"],
@@ -84,6 +89,13 @@ export function capabilities() {
       ready: true,
       takeover: true,
       resume: true,
+      terminal_view: true,
+      command_display: true,
+      local_reconnect: true,
+      local_menu_help: true,
+      connection_reuse: true,
+      session_history: true,
+      local_access_diagnostics: true,
     },
     shell_profiles: ["bash-v1"],
     requires_local_socket_access: true,
@@ -168,55 +180,47 @@ export async function main(args: string[]): Promise<number> {
       return 0
     }
     if (command === "doctor") {
-      const backend = await checkTmux(config.minimumTmux)
-      let target: object = {
-        state: "not_checked",
-        message:
-          "Complete login and ready before target capabilities can be reported; no remote probe was sent",
-      }
-      if (values["session-id"] || values.session) {
-        const saved = new State(config.stateDir)
-        await saved.init()
-        const name = await saved.select(values["session-id"], values.session)
-        const status = await new Sessions(config, saved).status(name)
-        target = {
-          state:
-            status.shell.state === "confirmed"
-              ? "last_confirmed"
-              : "not_checked",
-          session_id: status.session_id,
-          profile: status.shell.profile,
-          hostname: status.shell.endpoint_label,
-          bash_version: status.shell.bash_version,
-        }
-      }
-      emit(
-        {
-          bun_version: Bun.version,
-          platform: process.platform,
-          arch: process.arch,
-          tmux_version: backend.version,
-          backend_capabilities: backend.capabilities,
-          state_directory: config.stateDir,
-          actual_features: capabilities().features,
-          local_environment: {
-            bun_version: Bun.version,
-            platform: process.platform,
-            arch: process.arch,
-            tmux_version: backend.version,
-            ssh_available: Bun.which("ssh") !== null,
-          },
-          target_environment: target,
-        },
-        json,
+      const result = await diagnose(
+        config,
+        values["session-id"],
+        values.session,
       )
-      return 0
+      emit({ ...result, actual_features: capabilities().features }, json)
+      return "error" in result
+        ? result.error.code === "LOCAL_ACCESS_DENIED"
+          ? 5
+          : result.error.code === "DEPENDENCY_MISSING"
+            ? 3
+            : result.error.code === "INVALID_BINDING"
+              ? 4
+              : 8
+        : 0
     }
     const state = new State(config.stateDir)
     await state.init()
     const sessions = new Sessions(config, state)
     const executor = new Executor(sessions)
     const workflow = new Workflow(sessions)
+    const connections = new Connections(sessions)
+    const connectTerminal = async (name: string): Promise<number> => {
+      let current = name
+      while (true) {
+        const selected = await state.load(current)
+        console.log(humanResult(await sessions.status(current)))
+        if (
+          (await new SharedTerminal(sessions, workflow).attach(current)) ===
+          "detach"
+        )
+          return 0
+        const created = await connections.reconnect(selected)
+        current = created.alias
+        await state.select(created.id)
+        await sessions.showSessionId(created)
+        console.log(
+          `New connection: session_id=${created.id}. Old session_id=${selected.id} and its results remain unchanged. Complete login manually, then hand over this new session_id.`,
+        )
+      }
+    }
     if (command === "connect") {
       requireValue(
         !json,
@@ -230,13 +234,17 @@ export async function main(args: string[]): Promise<number> {
         5,
       )
       let name: string
+      requireValue(
+        !values.new || positionals[1] !== undefined,
+        "INVALID_INPUT",
+        "--new requires an SSH entry alias",
+      )
       if (positionals[1] !== undefined) {
         requireValue(
           values["session-id"] === undefined,
           "INVALID_INPUT",
-          "A new SSH connection cannot reuse a session_id",
+          "Use connect --session-id to return to that exact session, or connect SSH_ALIAS to select its connections",
         )
-        name = alias(values.session ?? config.session)
         const abandoned: string[] = []
         for (const scope of ["registry", "audit"]) {
           const lock = await inspectDirectoryLock(state.locks, scope)
@@ -256,42 +264,40 @@ export async function main(args: string[]): Promise<number> {
           for (const scope of abandoned)
             await recoverDirectoryLock(state.locks, scope)
         }
-        const existing = (await state.list()).find(
-          (binding) => binding.alias === name,
-        )
-        if (existing) {
+        const candidates = await connections.open({
+          ssh: positionals[1],
+          ...(values.session !== undefined
+            ? { name: alias(values.session) }
+            : {}),
+          fresh: values.new ?? false,
+        })
+        let index = 0
+        if (candidates.length > 1) {
           console.error(
-            `Session ${existing.alias} already exists: session_id=${existing.id}, SSH entry=${existing.sshAlias ?? "unknown"}.`,
+            candidates
+              .map(
+                (binding, number) =>
+                  `${number + 1}. ${binding.alias} | session_id=${binding.id}`,
+              )
+              .join("\n"),
           )
-          const selection = await question(
-            "Reuse this exact session [r], choose a new session name [n], or cancel [Enter]? ",
-          )
-          if (selection === "n")
-            name = alias(await question("New session name: "))
-          else
-            requireValue(
-              selection === "r",
-              "SESSION_CONFLICT",
-              "Connection was not created; select an existing session or a new --session name",
-              4,
-            )
-          if (selection === "r") {
-            await state.select(existing.id)
-            await sessions.showSessionId(existing)
-            const status = await sessions.status(name)
-            console.log(humanResult(status))
-            return await sessions.attach(name, status.control === "human")
-          }
+          index =
+            integer(
+              Number(await question("Choose a session number: ")),
+              "session number",
+              1,
+              candidates.length,
+            ) - 1
         }
+        const selected = candidates[index]
         requireValue(
-          Bun.which("ssh"),
-          "DEPENDENCY_MISSING",
-          "Local OpenSSH is required for connect",
-          3,
+          selected,
+          "INVALID_BINDING",
+          "No connection was selected",
+          4,
         )
-        const created = await sessions.start(name, positionals[1], true)
-        await state.select(created.id)
-        await sessions.showSessionId(created)
+        name = await state.select(selected.id)
+        await sessions.showSessionId(selected)
       } else {
         if (values["session-id"] !== undefined || values.session !== undefined)
           name = await state.select(values["session-id"], values.session)
@@ -321,11 +327,8 @@ export async function main(args: string[]): Promise<number> {
             name = await state.select(chosen.id)
           } else name = await state.select()
         }
-        await sessions.showSessionId(await state.load(name))
       }
-      const status = await sessions.status(name)
-      console.log(humanResult(status))
-      return await sessions.attach(name, status.control === "human")
+      return await connectTerminal(name)
     }
     const session =
       values["session-id"] !== undefined
@@ -333,6 +336,11 @@ export async function main(args: string[]): Promise<number> {
         : ["ready", "takeover", "resume"].includes(command)
           ? await state.select(undefined, values.session)
           : alias(values.session ?? config.session)
+    if (
+      values["session-id"] &&
+      !["status", "request", "list"].includes(command)
+    )
+      state.requireActive(await state.load(session))
     if (["ready", "takeover", "resume"].includes(command)) {
       const ended =
         command === "resume" &&
@@ -472,21 +480,27 @@ export async function main(args: string[]): Promise<number> {
       return 0
     }
     if (command === "list") {
-      emit(
-        {
-          sessions: await Promise.all(
-            (await state.list()).map((binding) =>
-              sessions.status(binding.alias),
-            ),
-          ),
-        },
-        json,
+      const listed = await Promise.all(
+        (await state.list()).map((binding) => sessions.status(binding.alias)),
       )
+      if (values.history) {
+        for (const binding of await state.listHistory()) {
+          const saved = new State(config.stateDir)
+          const name = await saved.select(binding.id)
+          listed.push(await new Sessions(config, saved).status(name))
+        }
+      }
+      emit({ sessions: listed }, json)
       return 0
     }
     if (command === "status") {
-      emit(await sessions.status(session), json)
-      return 0
+      const result = await sessions.status(session)
+      emit(result, json)
+      return "error" in result
+        ? result.error.code === "LOCAL_ACCESS_DENIED"
+          ? 5
+          : 8
+        : 0
     }
     if (command === "capture") {
       const lines =
@@ -583,13 +597,19 @@ export async function main(args: string[]): Promise<number> {
     const failure =
       error instanceof BridgeError
         ? error
-        : new BridgeError(
-            argumentError ? "INVALID_INPUT" : "LOCAL_IO_ERROR",
-            argumentError
-              ? "Invalid command line arguments"
-              : "Local operation failed",
-            argumentError ? 2 : 8,
-          )
+        : accessDenied(error)
+          ? new BridgeError(
+              "LOCAL_ACCESS_DENIED",
+              "Local access was denied; run doctor for the selected session",
+              5,
+            )
+          : new BridgeError(
+              argumentError ? "INVALID_INPUT" : "LOCAL_IO_ERROR",
+              argumentError
+                ? "Invalid command line arguments"
+                : "Local operation failed",
+              argumentError ? 2 : 8,
+            )
     const result = {
       schema_version: 1,
       ok: false,

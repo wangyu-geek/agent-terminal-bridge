@@ -1,4 +1,11 @@
-import { appendFile, readdir, rename, unlink } from "node:fs/promises"
+import {
+  appendFile,
+  lstat,
+  open,
+  readdir,
+  rename,
+  unlink,
+} from "node:fs/promises"
 import { join } from "node:path"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
 import { digest, withLock } from "./locking.ts"
@@ -22,14 +29,20 @@ import {
 } from "./validate.ts"
 
 export class State {
-  private selection: { alias: string; id: string } | null = null
+  private selection: {
+    alias: string
+    id: string
+    historical?: boolean
+  } | null = null
   readonly locks: string
   readonly bindings: string
   readonly requests: string
+  readonly history: string
   constructor(readonly root: string) {
     this.locks = join(root, "locks")
     this.bindings = join(root, "bindings")
     this.requests = join(root, "requests")
+    this.history = join(root, "history")
   }
   async init(): Promise<void> {
     try {
@@ -45,6 +58,16 @@ export class State {
   }
   async load(name: string): Promise<Binding> {
     try {
+      if (this.selection?.alias === name && this.selection.historical) {
+        const saved = await this.historical(this.selection.id)
+        requireValue(
+          saved?.alias === name,
+          "STATE_ERROR",
+          "Historical binding is missing or inconsistent",
+          8,
+        )
+        return saved
+      }
       const binding = parseBinding(await readJsonSecure(this.bindingPath(name)))
       requireValue(
         binding.alias === name,
@@ -70,7 +93,117 @@ export class State {
     }
   }
   async save(binding: Binding): Promise<void> {
+    this.requireActive(binding)
     await writeAtomic(this.bindingPath(binding.alias), binding)
+  }
+  isHistorical(binding: Binding): boolean {
+    return (
+      this.selection?.id === binding.id && this.selection.historical === true
+    )
+  }
+  requireActive(binding: Binding): void {
+    requireValue(
+      !this.isHistorical(binding),
+      "ARCHIVED_SESSION",
+      "This session_id is historical and read-only; select a current connection for terminal operations",
+      4,
+    )
+  }
+  private async historyAvailable(): Promise<boolean> {
+    try {
+      const stat = await lstat(this.history)
+      requireValue(
+        stat.isDirectory() &&
+          !stat.isSymbolicLink() &&
+          stat.uid === process.getuid?.() &&
+          (stat.mode & 0o077) === 0,
+        "UNSAFE_PATH",
+        "History directory must be a private owned directory, without symbolic links",
+        8,
+      )
+      return true
+    } catch (error) {
+      if (hasCode(error, "ENOENT")) return false
+      throw privatePathError(error)
+    }
+  }
+  async historical(id: string): Promise<Binding | null> {
+    requireValue(
+      /^[a-f0-9]{32}$/.test(id),
+      "INVALID_INPUT",
+      "Invalid historical session_id",
+    )
+    if (!(await this.historyAvailable())) return null
+    try {
+      const binding = parseBinding(
+        await readJsonSecure(join(this.history, `${id}.json`)),
+      )
+      requireValue(
+        binding.id === id,
+        "STATE_ERROR",
+        "Historical session identity mismatch",
+        8,
+      )
+      return binding
+    } catch (error) {
+      if (hasCode(error, "ENOENT")) return null
+      throw privatePathError(error)
+    }
+  }
+  async listHistory(): Promise<Binding[]> {
+    if (!(await this.historyAvailable())) return []
+    let files: string[]
+    try {
+      files = await readdir(this.history)
+    } catch (error) {
+      if (hasCode(error, "ENOENT")) return []
+      throw privatePathError(error)
+    }
+    const saved: Binding[] = []
+    for (const file of files) {
+      requireValue(
+        /^[a-f0-9]{32}\.json$/.test(file),
+        "STATE_ERROR",
+        "Unexpected history filename",
+        8,
+      )
+      const binding = await this.historical(file.slice(0, -5))
+      requireValue(binding, "STATE_ERROR", "Historical session disappeared", 8)
+      saved.push(binding)
+    }
+    const active = new Set((await this.list()).map((binding) => binding.id))
+    return saved.filter((binding) => !active.has(binding.id))
+  }
+  // Caller holds the resource and registry locks. Persist ID history before
+  // releasing the display name; a crash can leave a harmless duplicate copy.
+  async archive(binding: Binding): Promise<void> {
+    this.requireActive(binding)
+    const current = await this.load(binding.alias)
+    requireValue(
+      current.id === binding.id,
+      "BINDING_CHANGED",
+      "Display name changed during archival",
+      4,
+    )
+    await secureDirectory(this.history)
+    const saved = await this.historical(binding.id)
+    if (saved)
+      requireValue(
+        saved.alias === binding.alias &&
+          saved.marker === binding.marker &&
+          resourceKey(saved) === resourceKey(binding),
+        "STATE_ERROR",
+        "Historical ID is associated with another resource",
+        8,
+      )
+    else await writeAtomic(join(this.history, `${binding.id}.json`), binding)
+    await this.remove(binding.alias)
+    const directory = await open(this.bindings, "r")
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
   }
   async remove(name: string): Promise<void> {
     await unlink(this.bindingPath(name))
@@ -126,14 +259,18 @@ export class State {
         "session_id must be the complete 32-character Bridge ID",
       )
       const matches = bindings.filter((binding) => binding.id === id)
-      const selected = matches[0]
+      const selected = matches[0] ?? (await this.historical(id))
       requireValue(
-        matches.length === 1 && selected,
+        matches.length <= 1 && selected,
         "INVALID_BINDING",
         "session_id is missing or no longer registered; inspect list",
         4,
       )
-      this.selection = { alias: selected.alias, id: selected.id }
+      this.selection = {
+        alias: selected.alias,
+        id: selected.id,
+        historical: matches.length === 0,
+      }
       return selected.alias
     }
     requireValue(

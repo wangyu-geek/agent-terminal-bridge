@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
-import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { accessDenied, BridgeError, hasCode, requireValue } from "./errors.ts"
 import { type Config, OPERATIONS, type Operation } from "./models.ts"
 import { checkExistingFile } from "./security.ts"
 import {
@@ -50,6 +50,12 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     text = await file.text()
   } catch (error) {
     if (!explicitPath && hasCode(error, "ENOENT")) return config
+    if (accessDenied(error))
+      throw new BridgeError(
+        "LOCAL_ACCESS_DENIED",
+        "Cannot read local Bridge configuration",
+        5,
+      )
     throw new BridgeError("INVALID_CONFIG", "Cannot read configuration", 2)
   }
   const root = object(parseJson(text, "Configuration"), "configuration")

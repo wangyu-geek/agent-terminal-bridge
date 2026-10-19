@@ -228,6 +228,14 @@ export class ControlClient {
     }
     if (line.startsWith("%")) {
       const name = line.slice(1).split(" ")[0] ?? "unknown"
+      if (name === "layout-change") {
+        // Resizing a dedicated pane changes its geometry, not its identity.
+        // Split/linked/moved layouts still invalidate execution immediately.
+        const layout = /^[a-f0-9]{4},\d+x\d+,\d+,\d+,(\d+)$/.exec(
+          line.split(" ")[2] ?? "",
+        )
+        if (layout && `%${layout[1]}` === this.binding.paneId) return
+      }
       if (
         [
           "window-add",

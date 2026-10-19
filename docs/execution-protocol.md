@@ -26,9 +26,23 @@ RS ATB1|binding_nonce|request_nonce|END|exit_code US
 
 RS is 0x1e and US is 0x1f. Installation uses `ATB1|binding_nonce|request_nonce|ACK`. A PROBE frame carries Base64 hostname/user/cwd, Bash major version, and a numeric major.minor.patch version. Old major-only probes remain compatible for Bash >=4; Bash 3 requires a verified minor >=2. ACK is accepted only by an installation parser, never as execution completion. REJECT is valid only before BEGIN and means the user command was not started. Wrong ordering, duplicate completion, oversized frames and invalid fields cannot establish completion. Frame buffers are limited to 8192 bytes.
 
+Before BEGIN, current helpers emit an optional presentation frame:
+
+```text
+RS ATBV1|binding_nonce|request_nonce|COMMAND|base64_script US
+```
+
+The separate ATBV1 prefix keeps existing ATB1 execution parsers compatible: before BEGIN they ignore it. It cannot establish execution or completion and does not enter terminal_output. The local connect view decodes the bounded command for display, shows only framed command output while the Agent owns input, and hides helper/echo traffic. Commands/output are not added to state or audit files. A newly opened view does not replay past results.
+
+The default connect view keeps terminal-native scrollback/selection, filters Agent ANSI/OSC output, and owns a separate control client. Human key batches require the resource lock and current human ownership; blocked input is discarded. Ctrl+] local controls remain available with legacy and CSI u/Kitty/modifyOtherKeys encoding; ? opens the same menu only while remote input is blocked. Unknown human key sequences remain byte exact. The parser bounds unfinished sequences and flushes standalone Escape after 100 ms, under the original ownership context; pending fragments cannot cross a control/generation/menu change. Geometry-only changes to the same sole pane are allowed; split/replacement/topology changes still invalidate execution. Native attach clients keep their original read-only mechanism.
+
 Control-mode `%end` acknowledges a tmux command, not the remote command. `%output` octal decoding preserves raw bytes, including invalid UTF-8. Framing runs before display decoding; UTF-8 is decoded incrementally, known ANSI/OSC sequences are removed, other controls are shown as escapes. The retained output is bounded and truncation never stops draining the stream or parsing END.
 
 Output is `shared_pty_between_frames`, not isolated stdout/stderr. Background/system output can be interleaved. A valid END proves the wrapper observed a foreground exit status; it does not prove business success or the end of every descendant. A malicious shell can forge this protocol, which is outside the trust model.
+
+Default view state changes reset mouse/style modes without restoring a saved terminal cursor. When human input resumes, a resource-locked local snapshot of the pane's cursor row/column is projected below the transcript using terminal cell coordinates. No remote Enter or input-clearing keys are sent. Renderer tests check actual cell contents after Unicode prompts, long output, editing and repeated handoffs.
+
+Display names point to current bindings; retired bindings are stored by immutable ID before a name can be reused. Historical status/request read original task metadata; terminal mutations reject ARCHIVED_SESSION. Saved unknown results are neither acknowledged nor replayed by connection replacement. Local socket/process permission failures report LOCAL_ACCESS_DENIED/unverified and do not establish endpoint loss.
 
 ## Durable coordination
 

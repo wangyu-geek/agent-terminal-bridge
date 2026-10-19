@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { ControlClient } from "./control.ts"
-import { BridgeError, requireValue } from "./errors.ts"
+import { BridgeError, deniedDiagnostic, requireValue } from "./errors.ts"
 import type { Binding, Pane } from "./models.ts"
 import { runProcess } from "./process.ts"
 
@@ -49,12 +49,29 @@ export class Tmux {
         timeoutMs,
       },
     )
-    if (result.exitCode !== 0)
+    if (result.exitCode !== 0) {
+      if (deniedDiagnostic(result.stderr))
+        throw new BridgeError(
+          "LOCAL_ACCESS_DENIED",
+          "Cannot access the local tmux socket; grant its Unix socket access",
+          5,
+        )
+      if (
+        /No such file or directory|no server running|can't find (?:pane|window|session)|no sessions/i.test(
+          result.stderr,
+        )
+      )
+        throw new BridgeError(
+          "TMUX_OBJECT_MISSING",
+          "The selected tmux object is missing",
+          4,
+        )
       throw new BridgeError(
         "TMUX_ERROR",
         "tmux operation failed; inspect session state",
         8,
       )
+    }
     return result.stdout
   }
   async inspect(target: string): Promise<Pane> {
@@ -71,6 +88,8 @@ export class Tmux {
     )
     const num = (index: number) => {
       const value = fields[index] ?? ""
+      if (fields[5] === "1" && [4, 6, 7].includes(index) && value === "")
+        return 0
       requireValue(
         /^\d+$/.test(value),
         "PROTOCOL_ERROR",
@@ -261,6 +280,59 @@ export class Tmux {
       Math.max(limit * 4, 4 * 1024 * 1024),
     )
     return text.replace(/\n+$/, "").split("\n").slice(-lines).join("\n")
+  }
+  async inputLine(
+    binding: Binding,
+  ): Promise<{ text: string; column: number } | null> {
+    const target = paneTarget(binding)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const position = (
+        await this.run([
+          "display-message",
+          "-p",
+          "-t",
+          target,
+          "#{cursor_y},#{cursor_x}",
+        ])
+      ).trim()
+      const parts = /^(\d+),(\d+)$/.exec(position)
+      requireValue(
+        parts,
+        "PROTOCOL_ERROR",
+        "Invalid terminal cursor metadata",
+        8,
+      )
+      const row = Number(parts[1])
+      const column = Number(parts[2])
+      requireValue(
+        row < 10000 && column < 10000,
+        "PROTOCOL_ERROR",
+        "Terminal cursor exceeds view limits",
+        8,
+      )
+      const text = await this.run([
+        "capture-pane",
+        "-p",
+        "-t",
+        target,
+        "-S",
+        String(row),
+        "-E",
+        String(row),
+      ])
+      const after = (
+        await this.run([
+          "display-message",
+          "-p",
+          "-t",
+          target,
+          "#{cursor_y},#{cursor_x}",
+        ])
+      ).trim()
+      if (after === position)
+        return { text: text.replace(/\r?\n$/, ""), column }
+    }
+    return null
   }
 }
 

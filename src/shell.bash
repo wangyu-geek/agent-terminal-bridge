@@ -34,6 +34,7 @@ if [[ -n ${BASH_VERSION:-} ]] && (( BASH_VERSINFO[0] > 3 || (BASH_VERSINFO[0] ==
           return 0
         }
         _atb_source=${_atb_source%.}
+        builtin printf '\036ATBV1|__ATB_NONCE__|%s|COMMAND|%s\037' "$_atb_request" "$_atb_payload"
         builtin printf '\036ATB1|__ATB_NONCE__|%s|BEGIN\037' "$_atb_request"
         if (builtin unset BASH_ENV ENV; "$BASH" --noprofile --norc -c "$_atb_source") </dev/null; then
           _atb_rc=0

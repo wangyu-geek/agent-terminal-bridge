@@ -1,56 +1,56 @@
-# 本地权限接入与按会话接口设计
+# Local Permission Integration and Session-Scoped Interface Design
 
-Bridge 的 CLI/JSON 接口不依赖 Agent 品牌。宿主的命令沙箱仍决定 CLI 能读取哪些文件、写入哪些状态、连接哪些 Unix socket、执行哪些进程检查。session_id 是选择器；skill 和 AGENTS.md 不授予操作系统权限。
+Bridge's CLI/JSON interface is Agent-neutral. The host command sandbox still determines which files the CLI can read, which state it can write, which Unix sockets it can access, and which process checks it can perform. A session_id is a selector; a skill or AGENTS.md does not grant operating-system permissions.
 
-## 当前可用的诊断
+## Available diagnostics
 
 ```bash
 remote-terminal doctor --session-id SESSION_ID --json
 ```
 
-doctor 不向远端发送输入。local_access 报告以下检查及 required_access；写入探针仅为工具自己创建、同步和删除的私有临时文件，不修改绑定、任务或锁。
+`doctor` sends no input to the remote side. `local_access` reports the checks below and their `required_access`. A write probe uses only a private temporary file created, synced, and removed by the tool itself; it does not modify bindings, tasks, or locks.
 
-| 检查 | 用途 |
+| Check | Purpose |
 |---|---|
-| state_read | 读取当前绑定及任务记录 |
-| state_write | 在状态根目录创建、写入并同步临时探针，核对基础写入权限 |
-| tmux_socket | 读取所选本地 pane 的身份，无 shell 探测 |
-| process_identity | 校验保存的本地 tmux 进程创建身份 |
-| ready_for_session | 上述本地检查通过，不表示远端已登录或已交接 |
+| state_read | Read current bindings and task records |
+| state_write | Create, write, and sync a temporary probe under the state root to check basic write access |
+| tmux_socket | Read the identity of the selected local pane without shell probing |
+| process_identity | Verify the saved creation identity of the local tmux process |
+| ready_for_session | The local checks above passed; this does not mean the remote side is logged in or handed off |
 
-状态默认位于 XDG_STATE_HOME/agent-terminal-bridge，未设置时为 ~/.local/state/agent-terminal-bridge。受管 socket 在 /tmp/agent-terminal-bridge-UID 下；使用 doctor 输出的实际路径，不猜固定文件名。macOS 还需执行 /bin/ps 和 /usr/sbin/sysctl，Linux 使用 /proc 创建身份信息。已有 SSH 由 tmux 保管，观察/执行不需要 Agent 自己重新认证。
+State defaults to `XDG_STATE_HOME/agent-terminal-bridge`, or `~/.local/state/agent-terminal-bridge` when unset. Managed sockets are under `/tmp/agent-terminal-bridge-UID`; use the actual path from `doctor` rather than guessing a fixed filename. macOS also requires `/bin/ps` and `/usr/sbin/sysctl`; Linux uses process creation identity information from `/proc`. tmux owns the existing SSH connection; observing or executing does not require the Agent to authenticate again.
 
-首次连接前尚无状态目录时，普通 doctor 报告 missing，不创建目录，也不将其当成本地 I/O 故障。此时指定一个尚未登记的 session_id 返回 INVALID_BINDING（退出码 4）。
+Before the first connection, when no state directory exists yet, regular `doctor` reports `missing` and does not create the directory or treat it as a local I/O failure. Specifying a session_id that has not been registered returns `INVALID_BINDING` (exit code 4).
 
-LOCAL_ACCESS_DENIED 返回退出码 5。status 返回 binding=unverified、display_state=access_denied 和 inspect_local_access 动作；本地检查无法完成时可能为 inspection_failed。只有真正缺失/退出的对象才进入连接结束流程。权限错误不应导致删除状态、解除登记、重放任务或重新 SSH。
+`LOCAL_ACCESS_DENIED` returns exit code 5. `status` returns `binding=unverified`, `display_state=access_denied`, and the `inspect_local_access` action; if a local check cannot complete, it may return `inspection_failed`. Only an object that is genuinely missing or exited enters the connection-ended flow. Permission errors must not cause state deletion, unbinding, task replay, or a new SSH connection.
 
-## 命令级授权接入
+## Per-command authorization integration
 
-1. 保持宿主原有沙箱，对已经明确的 session_id 先运行 doctor。
-2. 向宿主申请该次 Bridge 调用所需的状态目录、具体 socket 和进程检查权限；实际命令内容仍须属于用户授权任务。支持逐条命令审批的宿主可对这一调用审批，无需把整个 Agent 会话切成全局 Full Access。
-3. 重新运行 doctor 和只读 status，检查失败项是否解除，再进行 ready/exec。没有获得所需权限时停止，保留绑定和请求历史。
+1. Keep the host's existing sandbox and run `doctor` first for the already selected session_id.
+2. Ask the host to authorize the state directory, specific socket, and process checks required by this Bridge invocation. The actual command must remain within the task authorized by the user. Hosts that support per-command approval can approve this invocation without switching the entire Agent session to global Full Access.
+3. Run `doctor` and read-only `status` again; confirm the failed checks are resolved before calling `ready`/`exec`. If required access is unavailable, stop and preserve the binding and request history.
 
-宿主版本、管理策略和执行接口可能限制授权粒度。不能承诺所有沙箱都能通过同一配置开放这些能力，也不由 Bridge 自动修改用户的宿主设置。OpenAI 的[权限与审批说明](https://learn.chatgpt.com/docs/agent-approvals-security)区分命令沙箱、网络和审批边界；[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)说明文件和 Unix socket 的权限选项。
+Host versions, administrative policies, and execution interfaces may limit authorization granularity. Do not promise that every sandbox can grant these capabilities through the same configuration, and Bridge does not automatically change host settings. OpenAI's [permissions and approvals guide](https://learn.chatgpt.com/docs/agent-approvals-security) distinguishes command sandbox, network, and approval boundaries; the [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) describes file and Unix socket permission options.
 
-本机 Codex CLI 0.152.1 的 helper 支持下列**诊断示例**；它只增加指定 socket 的许可，状态写入和 /bin/ps 可能仍被拒绝，不能将其当成完整授权配置：
+The helper in Codex CLI 0.152.1 on this machine supports the following **diagnostic example**. It grants access only to the specified socket; state writes and `/bin/ps` may still be denied, so do not treat this as a complete authorization configuration:
 
 ```bash
 codex sandbox -c 'sandbox_mode="workspace-write"' --allow-unix-socket /ABSOLUTE/BRIDGE.sock -- /ABSOLUTE/remote-terminal doctor --session-id SESSION_ID --json
 ```
 
-本地集成测试使用临时会话验证：普通调用有效；限制沙箱中记录可读、写入/socket/进程检查分别拒绝；单独许可 socket 后只有该项恢复，其他拒绝仍如实报告。CI 上没有 Codex helper 的平台明确跳过这一专项，不将其声明为已通过。此 helper 不代表桌面版每个会话的实际策略，生产接入仍以该宿主实际诊断为准。
+Local integration tests use temporary sessions to verify that regular calls work; in a restricted sandbox, records are readable while writes/socket/process checks are denied separately; permitting only the socket restores only that check, and other denials are still reported accurately. CI platforms without the Codex helper explicitly skip this special test; it is not reported as passing. The helper does not represent the actual policy of every desktop session. Production integration must follow diagnostics from the specific host in use.
 
-## 按 session 严格限制的受控接口：设计交付，尚未实现
+## Controlled session-scoped interface: design delivered, not implemented
 
-当前多个受管会话共用一个 tmux socket。直接许可这个 socket 能接触该 server 的其他对象，CLI 的 session_id 校验不能将其提升为操作系统级的单会话隔离。因此当前能力只声明资源/命令级接入；没有实现严格的单 session 代理。
+Multiple managed sessions currently share one tmux socket. Granting direct access to that socket can expose other objects on the same server, and CLI session_id checks do not provide operating-system-level isolation for one session. Therefore, current capabilities claim only resource/command-level integration; a strict single-session proxy has not been implemented.
 
-若产品需要这一边界，后续受控适配器采用以下契约：
+If the product requires this boundary, a future controlled adapter should follow this contract:
 
-- 用户在可信本地侧显式授权某个完整 session_id；适配器保存独立、可撤销的能力记录，绑定 ID、资源身份、授权操作与当前交接代次。公开 session_id 不兼任授权密钥。
-- Agent 通过宿主受控工具调用结构化 status/exec/request/takeover/resume。可提供 stdio/MCP 适配，但核心协议保持通用，不新增默认 HTTP 监听或远端服务。
-- 适配器在具备所需本地权限的进程中执行；Agent 命令沙箱不直接获得 tmux socket 或可修改授权记录的目录。若宿主同时开放了直接 socket 访问，则不再宣称由适配器实现独占边界。
-- 每次操作复核能力、绑定和实际权限；拒绝其他 ID、全局 tmux 管理、任意原始输入或隐式登记。命令仍受宿主对具体任务的授权，终端文字不会扩大范围。
-- 绑定重建/名称复用不重定向旧能力。人工接管撤销执行资格，重新交接时显式验证新代次；历史授权只允许查询原 ID 的请求元数据。
-- 验证跨 ID 请求拒绝、能力撤销、代次变化、双请求竞争、故障 unknown 不重放，以及 Agent 无法从命令沙箱绕过适配器访问 socket。仍不对抗同一 OS 用户下的其他恶意进程或 root。
+- The user explicitly authorizes one complete session_id on a trusted local side. The adapter stores a separate, revocable capability record bound to the ID, resource identity, authorized operations, and current handoff generation. The public session_id is not an authorization secret.
+- The Agent calls structured `status`/`exec`/`request`/`takeover`/`resume` through host-controlled tools. A stdio/MCP adapter may be provided, while the core protocol stays generic; do not add a default HTTP listener or remote service.
+- The adapter runs in a process with the required local permissions. The Agent command sandbox does not receive direct access to the tmux socket or to a directory where it could modify authorization records. If the host also allows direct socket access, do not claim the adapter provides an exclusive boundary.
+- Recheck capability, binding, and actual permissions for every operation. Reject other IDs, global tmux management, arbitrary raw input, or implicit registration. Commands remain subject to host authorization for the specific task; terminal text cannot expand the scope.
+- Recreating a binding or reusing a name does not redirect an old capability. Human takeover revokes execution eligibility; a new handoff explicitly verifies the new generation. Historical authorization permits only request metadata queries for the original ID.
+- Test rejection of cross-ID requests, capability revocation, generation changes, competing requests, no replay after unknown failures, and the Agent's inability to bypass the adapter from the command sandbox to access the socket. This still does not protect against other malicious processes running as the same OS user or against root.
 
-该设计需要独立实现与宿主验证；本轮没有通过文档或 capability 声称代理已经可用。
+This design requires an independent implementation and host validation. This release does not claim the proxy is available based on documentation or a capability flag.

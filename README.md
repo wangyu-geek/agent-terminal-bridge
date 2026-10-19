@@ -1,6 +1,8 @@
 # Agent Terminal Bridge
 
-An agent-neutral CLI for sharing a terminal you have logged into with an Agent. Text/JSON only: no screenshots, multimodal model, Agent SDK, remote daemon or remote Bun installation.
+[English](README.md) | [中文](README.zh.md)
+
+A local CLI that lets an Agent work in a terminal session you’ve already logged into. Text/JSON only: no screenshots, multimodal model, Agent SDK, remote daemon or remote Bun installation.
 
 **Normal flow: one connection command → manual login → one handoff message.** A shared session has a `session_id`; each command has a separate `request_id`. You do not need to provide a hostname.
 
@@ -21,20 +23,9 @@ No Bridge config file is required for the default single-session flow.
 
 ### Install the Agent skill
 
-With Node.js/npm (`npx`) available on your local machine:
-
-1. Open a terminal in the project where you want the skill available and run:
-
-   ```bash
-   npx skills add wangyu-geek/agent-terminal-bridge --skill agent-terminal-bridge
-   ```
-
-2. Follow the installer prompts, select your Agent when prompted, and confirm installation. The default scope is the current project; append `--global` to make the skill available across projects. See the [Skills CLI options](https://github.com/vercel-labs/skills#options).
-3. Reload or enable skills in your Agent host, then verify that `agent-terminal-bridge` appears in its available skills.
-
-This installs the Agent instructions; install the `remote-terminal` executable separately as described above. CLI installation alone does not register the skill.
-
-For manual installation, copy the entire [skill directory](skills/agent-terminal-bridge/SKILL.md), including its references, into the skills directory configured by your Agent host, then reload and verify it is listed. Hosts without skills can use [the AGENTS.md routing example](examples/AGENTS.md). [Integration details](docs/agent-integration.md).
+```bash
+npx skills add wangyu-geek/agent-terminal-bridge --skill agent-terminal-bridge
+```
 
 ## Connect, log in and hand over
 
@@ -76,7 +67,7 @@ Complete passwords, MFA and server selection yourself. The local Bridge banner s
 
 When the selected server's shell is idle and ready, tell your Agent:
 
-> 登录好了，可以接管，用共享终端帮我检查磁盘。
+> I'm logged in. You can take over and check disk usage in the shared terminal.
 
 The skill reads the single authorized session, calls ready, and executes the requested task. You do not copy initialization code, open a second terminal or type a hostname. With several sessions, provide the session_id from the banner or choose from the Agent's list.
 
@@ -94,7 +85,7 @@ The SSH connection must originate in the Bridge/tmux pane. An SSH process alread
 
 ## Take back control and continue
 
-While the Agent controls input, press **?**, then **t** (no Enter required) to take over in the same window. **Ctrl+]** also opens the local menu in either ownership mode. You can also tell your Agent “把这个会话交回我”. The coordinator waits for actual ownership transfer; it does not automatically interrupt a running remote program. **? → q** (Agent mode) or **Ctrl+] → q** detaches the view and leaves SSH running; **c** continues viewing.
+While the Agent controls input, press **?**, then **t** (no Enter required) to take over in the same window. **Ctrl+]** also opens the local menu in either ownership mode. You can also tell your Agent “Give this session back to me.” The coordinator waits for actual ownership transfer; it does not automatically interrupt a running remote program. **? → q** (Agent mode) or **Ctrl+] → q** detaches the view and leaves SSH running; **c** continues viewing.
 
 The ? shortcut is available in newly opened views from this version; replacing the executable does not update an already running view. In human mode ? remains normal remote input. If a shortcut fails, ask the Agent to return the selected session through CLI takeover.
 
@@ -102,7 +93,7 @@ After takeover, the view appends a fresh local projection of the current termina
 
 Inspect and handle the terminal yourself. Then say:
 
-> 已处理完，登录和目标选择都已完成，现在可以继续。
+> I've finished handling it. The login and target selection are complete; you can continue now.
 
 The Agent uses resume to record recovery and prepare the shell again. The same session_id remains valid while that binding exists. Recreating or rebinding a session produces a new ID.
 

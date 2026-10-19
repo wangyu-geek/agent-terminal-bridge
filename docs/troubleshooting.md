@@ -48,7 +48,7 @@ Clearing a lock never establishes a remote exit status. Existing prepared/sent/r
 
 ## Local terminal details
 
-Bun 1.4.2 on macOS cannot directly canonicalize a Unix socket with its fs realpath implementation; Bridge validates the socket and canonicalizes its parent instead. Managed sockets use a short private `/tmp` path to fit the platform's Unix-socket limit.
+Bridge validates a Unix socket and canonicalizes its parent to avoid platform-specific realpath errors such as EOPNOTSUPP. Managed sockets use a short private `/tmp` path to fit the platform's Unix-socket limit.
 
 An external pane still carrying an old Bridge marker is not automatically reassigned. Inspect the old binding and unresolved records before explicitly removing an obsolete marker in tmux. Recreating or respawning a pane invalidates prior process identity even if its `%N` ID remains the same.
 

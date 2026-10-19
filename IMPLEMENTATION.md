@@ -7,7 +7,7 @@ The TypeScript/Bun CLI and the documented Phase 1/2 execution lifecycle are impl
 | Requirement | Authoritative implementation / verification |
 |---|---|
 | Agent-neutral, text/JSON CLI; no model or GUI dependency | [src/cli.ts](src/cli.ts), package runtime dependencies are empty; packaged capabilities report requires_multimodal_model=false |
-| Bun 1.4.2, strict TS, reproducible development tools | [package.json](package.json), bun.lock, tsconfig.json, biome.json; frozen install and check passed |
+| Bun, strict TS, reproducible development tools | [package.json](package.json), bun.lock, tsconfig.json, biome.json; frozen install and check passed |
 | doctor / capabilities / help / version / JSON errors | CLI and packaging smoke checks; actual tmux command flags are detected and optional copy-mode support is reported separately |
 | start, explicit SSH alias, idempotent registration | [src/session.ts](src/session.ts), [session tests](tests/integration/session.test.ts); SSH is a local fake executable in the test, not a real connection |
 | bind/unbind/list/status; exact identity and ownership | Session/state/tmux/identity modules; real external binding, permissions, stale/respawn and no-external-stop tests |

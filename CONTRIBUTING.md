@@ -2,7 +2,9 @@
 
 Read [AGENTS.md](AGENTS.md) and the relevant sections of [Solution.md](Solution.md). This is a single-package TypeScript/Bun CLI; code must stay independent of specific Agents and terminal emulators.
 
-Use Bun 1.4.2 and install the exact development dependencies with `bun install --frozen-lockfile`. The runtime itself has no third-party package dependencies. Local integration tests require tmux and target Bash >=3.2. Set ATB_TEST_BASH to a specific Bash executable to run the full suite with that interpreter; an invalid override fails instead of silently selecting another Bash.
+Use Bun and install the locked development dependencies with `bun install --frozen-lockfile`. [package.json](package.json) defines the supported range in `engines.bun` and the CI baseline in `packageManager`. CLI and build entrypoints check that range; use the baseline version when reproducing CI results.
+
+The runtime has no third-party package dependencies. Local integration tests require tmux and target Bash >=3.2. Set ATB_TEST_BASH to a specific Bash executable to run the full suite with that interpreter; an invalid override fails instead of silently selecting another Bash.
 
 ```bash
 bun run check

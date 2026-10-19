@@ -4,7 +4,7 @@ The project targets local macOS/Linux hosts and a Bash >=3.2 target execution pr
 
 | Surface | Evidence / current status |
 |---|---|
-| Bun | Development and local checks use 1.4.2, as pinned in packageManager |
+| Bun | Supported range and CI baseline are declared in [package.json](../package.json); recorded test environments are listed in [remediation validation](remediation-validation.md) |
 | macOS arm64 | Locally exercised with tmux 3.8, system Bash 3.2.57, compiled Bash 4.4.18 and Homebrew Bash 5.3; includes automatic ready, real human PTYs and crash recovery. Current evidence: [remediation validation](remediation-validation.md) |
 | tmux minimum 3.2 | Planned compatibility floor; the Ubuntu 22.04 CI job exercises its packaged version. Not claimed as locally run on this Mac |
 | Copy-mode screen snapshots | Require tmux's capture-pane -M flag, absent in 3.2a; doctor reports capture_mode_screen and unsupported backends return exit 3 without a buffer fallback |

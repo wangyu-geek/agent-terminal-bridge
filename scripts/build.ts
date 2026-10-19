@@ -1,4 +1,7 @@
 import { chmod } from "node:fs/promises"
+import { requireBun } from "../src/runtime.ts"
+
+requireBun()
 
 const result = await Bun.build({
   entrypoints: ["src/cli.ts"],

@@ -49,7 +49,7 @@ Bridge 提供统一 CLI，让用户与 Agent 访问预先纳入管理的同一�
 
 | 项目 | 选择及理由 |
 |---|---|
-| 本地实现 | TypeScript 严格模式，Bun >=1.4.2；初始开发及 CI 固定为 Bun 1.4.2 |
+| 本地实现 | TypeScript 严格模式、Bun；版本策略由 package.json 声明 |
 | 构建与模块 | ESM、Preserve/Bundler 模块规则；Bun 直接运行 TS，Bun.build 构建 bundle 或独立可执行文件 |
 | 终端后端 | tmux，复用已有会话管理、PTY 和人工 attach 能力 |
 | 计划支持下限 | tmux >=3.2；发布前必须在下限版本与发布时选定的稳定版本上验证实际使用的能力 |
@@ -59,7 +59,7 @@ Bridge 提供统一 CLI，让用户与 Agent 访问预先纳入管理的同一�
 | Agent 接口 | CLI、版本化 JSON、能力查询；特定 Agent 适配放在示例层 |
 | 配置与测试 | JSON 应用配置、运行时校验；bun:test 直接运行 .test.ts |
 
-统一由 Bun 负责运行、依赖安装、测试及构建，packageManager 固定为 bun@1.4.2，并提交 bun.lock；升级版本需要同步验证子进程、信号、文件持久化与独立可执行文件行为。该版本来自当前本机与参照项目的实际环境，不声称是最新 Bun，也不假定 packageManager 字段会自动切换运行时。
+统一由 Bun 负责运行、依赖安装、测试及构建，提交 bun.lock。package.json 的 engines.bun 声明兼容范围，packageManager 指定 CI 基准；CLI 和构建入口共用版本检查，CI 从配置读取安装版本。升级后验证子进程、信号、文件持久化与独立可执行文件行为。
 
 首期不引入第三方运行时依赖，不要求 node-gyp、node-pty 或其他原生扩展。tmux 已经管理 PTY，Bridge 使用 Bun.spawn 驱动它。需要精确权限、目录锁和 sync/rename 语义时，可使用 Bun 已实现并经过本项目测试的 node:fs/promises 兼容接口；node: 前缀不表示需要另装 Node.js。
 
@@ -822,7 +822,7 @@ agent-terminal-bridge/
 
 根目录 [AGENTS.md](AGENTS.md) 用于指导本仓库开发，规定实现语言、阶段门槛、模块职责和验证要求；`examples/AGENTS.md` 是未来供 Bridge 使用者参考的运行时集成示例，两者职责不同。
 
-首期保持零第三方运行时依赖。package.json 使用 type=module、engines.bun >=1.4.2 和 packageManager=bun@1.4.2；CI 显式安装并核对固定版本，不依赖包管理器声明自动生效。
+首期保持零第三方运行时依赖。package.json 声明 ESM 模式、Bun 兼容范围和 CI 基准；CI 读取 packageManager 安装 Bun，再按锁文件安装依赖。
 
 开发依赖包括锁定版本的 typescript、@types/bun 和 @biomejs/biome，提交 bun.lock，CI 使用 bun install --frozen-lockfile。tsconfig 使用 noEmit、module=Preserve、moduleResolution=Bundler、types=["bun"]、strict、noUncheckedIndexedAccess 和 exactOptionalPropertyTypes；源码相对导入显式使用 .ts，并启用 allowImportingTsExtensions。
 

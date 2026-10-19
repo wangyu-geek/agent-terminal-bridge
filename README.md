@@ -15,15 +15,58 @@ mkdir -p "$HOME/.local/bin"
 install -m 755 dist/remote-terminal "$HOME/.local/bin/remote-terminal"
 ```
 
-Add `~/.local/bin` to your PATH using your shell's usual configuration. A package installation instead uses `dist/cli.js` and requires Bun >=1.4.2.
-
-Copy the entire [skill directory](skills/agent-terminal-bridge/SKILL.md), including its references, into the skills directory configured by your Agent host, then enable/reload it and verify it is listed. CLI installation alone does not register the skill. Hosts without skills can use [the AGENTS.md routing example](examples/AGENTS.md). [Integration details](docs/agent-integration.md).
+Add `~/.local/bin` to your PATH using your shell's usual configuration. A package installation instead uses `dist/cli.js` and requires Bun.
 
 No Bridge config file is required for the default single-session flow.
 
+### Install the Agent skill
+
+With Node.js/npm (`npx`) available on your local machine:
+
+1. Open a terminal in the project where you want the skill available and run:
+
+   ```bash
+   npx skills add wangyu-geek/agent-terminal-bridge --skill agent-terminal-bridge
+   ```
+
+2. Follow the installer prompts, select your Agent when prompted, and confirm installation. The default scope is the current project; append `--global` to make the skill available across projects. See the [Skills CLI options](https://github.com/vercel-labs/skills#options).
+3. Reload or enable skills in your Agent host, then verify that `agent-terminal-bridge` appears in its available skills.
+
+This installs the Agent instructions; install the `remote-terminal` executable separately as described above. CLI installation alone does not register the skill.
+
+For manual installation, copy the entire [skill directory](skills/agent-terminal-bridge/SKILL.md), including its references, into the skills directory configured by your Agent host, then reload and verify it is listed. Hosts without skills can use [the AGENTS.md routing example](examples/AGENTS.md). [Integration details](docs/agent-integration.md).
+
 ## Connect, log in and hand over
 
-In your real local terminal, replace `bastion` with an existing SSH configuration alias:
+Bridge uses your local OpenSSH configuration in `~/.ssh/config`. Reuse an existing host alias, or create the file if needed:
+
+```bash
+mkdir -p "$HOME/.ssh"
+touch "$HOME/.ssh/config"
+chmod 700 "$HOME/.ssh"
+chmod 600 "$HOME/.ssh/config"
+```
+
+Add an entry to `~/.ssh/config`, replacing the example values with your connection details:
+
+```sshconfig
+Host bastion
+    HostName bastion.example.com
+    User your-user
+    Port 22
+    # Optional for key authentication:
+    # IdentityFile ~/.ssh/id_ed25519
+```
+
+`Host` defines the local alias passed to Bridge. `HostName` is the SSH entry's hostname or IP address; `User` is your login account and `Port` is its SSH port. For key authentication, uncomment `IdentityFile` and use your private key's path. For an interactive bastion, configure the bastion entry here and select the final server after login; for direct SSH, configure the target server itself.
+
+Optionally inspect the resolved settings without opening an SSH connection:
+
+```bash
+ssh -G bastion
+```
+
+Then, in your real local terminal, connect using the `Host` alias:
 
 ```bash
 remote-terminal connect bastion
@@ -115,4 +158,4 @@ Non-interactive `--json` stdout contains one JSON object. Exit codes: 0 success;
 
 For source development, run `make` for shortcuts such as `make deps`, `make check`, `make test`, `make build` and `make build-bin`. [Development commands and argument forwarding](CONTRIBUTING.md).
 
-Implemented in TypeScript + Bun 1.4.2. MIT licensed.
+Built with TypeScript and Bun. [MIT licensed](LICENSE).

@@ -11,6 +11,7 @@ import { inspectDirectoryLock, recoverDirectoryLock } from "./locking.ts"
 import { OPERATIONS } from "./models.ts"
 import { sanitizeText } from "./output.ts"
 import { errorNextStep, humanResult } from "./presentation.ts"
+import { requireBun } from "./runtime.ts"
 import { Sessions } from "./session.ts"
 import { State } from "./state.ts"
 import { SharedTerminal } from "./terminal.ts"
@@ -107,18 +108,7 @@ export async function main(args: string[]): Promise<number> {
   const json = args.includes("--json")
   let currentRequestId: string | null = null
   try {
-    const version = Bun.version
-      .split(".")
-      .map((part) => Number.parseInt(part, 10))
-    requireValue(
-      (version[0] ?? 0) > 1 ||
-        (version[0] === 1 &&
-          ((version[1] ?? 0) > 4 ||
-            (version[1] === 4 && (version[2] ?? 0) >= 2))),
-      "DEPENDENCY_MISSING",
-      "Bun >=1.4.2 is required",
-      3,
-    )
+    requireBun()
     const parsed = parseArgs({
       args,
       options: OPTIONS,

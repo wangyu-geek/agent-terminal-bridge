@@ -21,7 +21,7 @@
 
 | 部分 | 约定 |
 |---|---|
-| 本地 CLI 与核心逻辑 | TypeScript 严格模式，Bun >=1.4.2，初始开发与 CI 固定 Bun 1.4.2 |
+| 本地 CLI 与核心逻辑 | TypeScript 严格模式、Bun；支持范围与 CI 基准见 package.json |
 | 模块与分发 | ESM / Preserve + Bundler，Bun bundle 与独立可执行文件 |
 | 终端管理 | 调用本机 tmux CLI，计划支持 tmux >=3.2，并验证实际使用的能力 |
 | 远端执行协议 | bash-v1 使用少量 Bash，要求目标 shell Bash >=3.2 与 base64/tr；支持范围以实际矩阵验证记录为准 |
@@ -46,10 +46,11 @@ Phase 1 的 capabilities 必须返回 exec=false。不得用 send+capture 拼成
 
 ## 代码组织与职责
 
-采用单包 `src/` 布局。package.json 声明 engines.bun >=1.4.2、packageManager=bun@1.4.2 和 type=module；版本升级同步修改 CI 与验证记录。
+采用单包 `src/` 布局。package.json 通过 engines.bun 声明兼容范围、packageManager 指定 CI 基准，并使用 type=module。CLI 与构建入口共用 runtime.ts 的版本检查，CI 从 packageManager 安装 Bun；调整版本策略后运行相应验证。
 
 - `cli.ts`：参数、输入校验、JSON 输出与退出码，不承载 tmux 或 shell 协议细节。
 - `config.ts` / `models.ts`：配置解析、类型和有明确含义的状态数据。
+- `runtime.ts`：根据 package.json 检查 Bun 兼容范围，不在入口复制版本数字。
 - `tmux.ts` / `control.ts`：精确寻址、输入、快照与连续输出连接。
 - `connections.ts`：按 SSH 入口选择/复用连接、--new、名称复用和已结束绑定归档；不认领其他入口或无入口信息的旧记录。
 - `diagnostics.ts`：只做本地文件/socket/进程权限诊断；临时写入仅限自己的探针文件，不向远端发命令。
@@ -131,7 +132,7 @@ src 由 Bun 直接运行，scripts/build.ts 构建 Bun-target bundle 到 dist；
 
 ## 测试与本地开发
 
-先确认固定 Bun 版本。以下命令在本项目根目录执行；构建/打包变更还需要 smoke 检查：
+使用 package.json 声明范围内的 Bun；复现 CI 时使用 packageManager 指定的版本。以下命令在本项目根目录执行；构建/打包变更还需要 smoke 检查：
 
 ```bash
 bun install --frozen-lockfile

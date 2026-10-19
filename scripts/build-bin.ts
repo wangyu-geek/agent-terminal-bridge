@@ -1,4 +1,7 @@
 import { mkdir } from "node:fs/promises"
+import { requireBun } from "../src/runtime.ts"
+
+requireBun()
 
 const target = process.argv
   .find((item) => item.startsWith("--target="))

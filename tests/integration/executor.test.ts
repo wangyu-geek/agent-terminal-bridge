@@ -135,65 +135,70 @@ integration(
   async () => {
     const f = await fixture(true)
     await f.bashSession()
-    const timed = await f.cli(
-      execute(
-        "timeout",
-        `sleep 0.5; printf survived > '${f.directory}/finished'`,
-        "0.15",
-      ),
-    )
-    expect(timed.code).toBe(7)
-    expect(timed.result).toMatchObject({
-      execution_state: "unknown",
-      completed: false,
-      exit_code: null,
-      recovery_required: true,
-    })
-    expect((await f.cli(execute("blocked", "printf forbidden"))).code).toBe(9)
-    await waitFor(
-      async () => await Bun.file(`${f.directory}/finished`).exists(),
-    )
-    expect(await readFile(`${f.directory}/finished`, "utf8")).toBe("survived")
-    expect(
-      (
-        await f.cli([
-          "handoff",
-          "--to",
-          "human",
-          "--takeover",
-          "--request-id",
-          "timeout",
-          "--confirm",
-          "--json",
-        ])
-      ).code,
-    ).toBe(0)
-    expect(
-      (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
-        .code,
-    ).toBe(9)
-    expect(
-      (
-        await f.cli([
-          "recover",
-          "--request-id",
-          "timeout",
-          "--confirm",
-          "--json",
-        ])
-      ).result,
-    ).toMatchObject({ execution_state: "unknown", recovery_recorded: true })
-    await f.reinitialize()
-    expect(
-      (await f.cli(execute("resumed", "printf resumed"))).result
-        .terminal_output,
-    ).toBe("resumed")
-    const old = await f.cli(["request", "--request-id", "timeout", "--json"])
-    expect(old.result).toMatchObject({
-      execution_state: "unknown",
-      completed: false,
-      recovered: true,
-    })
+    const gate = f.commandGate(`printf survived > '${f.directory}/finished'`)
+    try {
+      const [timed] = await Promise.all([
+        f.cli(execute("timeout", gate.command, "2")),
+        waitFor(gate.started),
+      ])
+      expect(timed.code).toBe(7)
+      expect(timed.result).toMatchObject({
+        execution_state: "unknown",
+        completed: false,
+        exit_code: null,
+        recovery_required: true,
+        error: { code: "TIMEOUT" },
+      })
+      expect(await Bun.file(`${f.directory}/finished`).exists()).toBe(false)
+      expect((await f.cli(execute("blocked", "printf forbidden"))).code).toBe(9)
+      await gate.release()
+      await waitFor(
+        async () => await Bun.file(`${f.directory}/finished`).exists(),
+      )
+      expect(await readFile(`${f.directory}/finished`, "utf8")).toBe("survived")
+      expect(
+        (
+          await f.cli([
+            "handoff",
+            "--to",
+            "human",
+            "--takeover",
+            "--request-id",
+            "timeout",
+            "--confirm",
+            "--json",
+          ])
+        ).code,
+      ).toBe(0)
+      expect(
+        (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
+          .code,
+      ).toBe(9)
+      expect(
+        (
+          await f.cli([
+            "recover",
+            "--request-id",
+            "timeout",
+            "--confirm",
+            "--json",
+          ])
+        ).result,
+      ).toMatchObject({ execution_state: "unknown", recovery_recorded: true })
+      await f.reinitialize()
+      expect(
+        (await f.cli(execute("resumed", "printf resumed"))).result
+          .terminal_output,
+      ).toBe("resumed")
+      const old = await f.cli(["request", "--request-id", "timeout", "--json"])
+      expect(old.result).toMatchObject({
+        execution_state: "unknown",
+        completed: false,
+        recovered: true,
+      })
+    } finally {
+      await gate.release()
+    }
   },
 )
 

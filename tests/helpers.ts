@@ -186,6 +186,24 @@ export class Fixture {
     }
     throw new Error("Expected terminal content did not arrive")
   }
+  commandGate(command: string) {
+    const path = join(this.directory, `gate-${crypto.randomUUID()}`)
+    // Signal actual shell execution, then keep it running until the test
+    // releases it. A short CLI deadline alone cannot prove dispatch occurred.
+    return {
+      command: [
+        `printf started > '${path}.started'`,
+        "for ((atb_wait=0; atb_wait<400; atb_wait++)); do",
+        `  [[ -f '${path}.release' ]] && break`,
+        "  sleep 0.05",
+        "done",
+        `[[ -f '${path}.release' ]] || exit 124`,
+        command,
+      ].join("\n"),
+      started: () => Bun.file(`${path}.started`).exists(),
+      release: () => writeFile(`${path}.release`, "", { mode: 0o600 }),
+    }
+  }
   async humanRoundTrip(
     terminal: Bun.Terminal | undefined,
     output: () => string,

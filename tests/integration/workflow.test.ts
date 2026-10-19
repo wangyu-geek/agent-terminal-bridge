@@ -22,6 +22,8 @@ afterEach(async () => {
 async function fresh(bash: string) {
   const fixture = await Fixture.create()
   fixtures.push(fixture)
+  const prompt = `fixture-shell-${crypto.randomUUID()}>`
+  fixture.env.PS1 = `${prompt} `
   const external = await fixture.external([bash, "--noprofile", "--norc"])
   expect(
     (
@@ -38,6 +40,8 @@ async function fresh(bash: string) {
       ])
     ).code,
   ).toBe(0)
+  // Registration does not prove that Bash has finished starting its input loop.
+  await fixture.untilCapture((output) => output.includes(prompt))
   const config = await loadConfig(
     join(fixture.directory, "config/agent-terminal-bridge/config.json"),
   )
@@ -258,50 +262,97 @@ integration(
   async () => {
     const { fixture } = await fresh("/bin/bash")
     const id = (await fixture.binding()).id
-    await fixture.cli(["ready", "--session-id", id, "--confirm", "--json"])
-    const result = await fixture.cli([
-      "exec",
+    const ready = await fixture.cli([
+      "ready",
       "--session-id",
       id,
-      "--request-id",
-      "slow-effect",
-      "--timeout",
-      "0.1",
+      "--confirm",
       "--json",
-      `sleep 0.4; printf x >> '${fixture.directory}/effect'`,
     ])
-    expect(result.result.execution_state).toBe("unknown")
-    expect(
-      (
-        await fixture.cli([
-          "takeover",
-          "--session-id",
-          id,
-          "--confirm",
-          "--json",
-        ])
-      ).result.taken_over,
-    ).toBe(true)
-    await until(
-      async () => await Bun.file(`${fixture.directory}/effect`).exists(),
+    expect(ready.result).toMatchObject({ ok: true, ready: true })
+    const gate = fixture.commandGate(
+      `printf x >> '${fixture.directory}/effect'`,
     )
-    expect(
-      (await fixture.cli(["resume", "--session-id", id, "--confirm", "--json"]))
-        .result.ready,
-    ).toBe(true)
-    expect(
-      (
-        await fixture.cli([
-          "request",
+    try {
+      const [result] = await Promise.all([
+        fixture.cli([
+          "exec",
           "--session-id",
           id,
           "--request-id",
           "slow-effect",
+          "--timeout",
+          "2",
           "--json",
-        ])
-      ).result,
-    ).toMatchObject({ execution_state: "unknown", recovered: true })
-    expect(await Bun.file(`${fixture.directory}/effect`).text()).toBe("x")
+          gate.command,
+        ]),
+        until(gate.started),
+      ])
+      expect(result.code).toBe(7)
+      expect(result.result).toMatchObject({
+        execution_state: "unknown",
+        completed: false,
+        exit_code: null,
+        recovery_required: true,
+        error: { code: "TIMEOUT" },
+      })
+      expect(await Bun.file(`${fixture.directory}/effect`).exists()).toBe(false)
+      expect(
+        (
+          await fixture.cli([
+            "takeover",
+            "--session-id",
+            id,
+            "--confirm",
+            "--json",
+          ])
+        ).result.taken_over,
+      ).toBe(true)
+      await gate.release()
+      await until(
+        async () => await Bun.file(`${fixture.directory}/effect`).exists(),
+      )
+      expect(
+        (
+          await fixture.cli([
+            "resume",
+            "--session-id",
+            id,
+            "--confirm",
+            "--json",
+          ])
+        ).result.ready,
+      ).toBe(true)
+      expect(
+        (
+          await fixture.cli([
+            "request",
+            "--session-id",
+            id,
+            "--request-id",
+            "slow-effect",
+            "--json",
+          ])
+        ).result,
+      ).toMatchObject({ execution_state: "unknown", recovered: true })
+      const duplicate = await fixture.cli([
+        "exec",
+        "--session-id",
+        id,
+        "--request-id",
+        "slow-effect",
+        "--json",
+        gate.command,
+      ])
+      expect(duplicate.result).toMatchObject({
+        execution_state: "unknown",
+        recovered: true,
+        output_available: false,
+      })
+      expect(await Bun.file(`${fixture.directory}/effect`).text()).toBe("x")
+    } finally {
+      await gate.release()
+    }
   },
   30000,
 )

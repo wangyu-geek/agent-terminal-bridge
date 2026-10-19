@@ -4,6 +4,20 @@
 
 Skill scope update (2026-10-19): supports only the current CLI `session_id` workflow; legacy compatibility references and fallback guidance were removed. Stop and prompt for a CLI update when a required capability is missing. Skill structure, documentation/examples, and package-content checks passed. The current tarball contains 20 files and one session-workflow reference. This update changed no runtime code and did not rerun the terminal matrix or real SSH. The execution and file-count details below are snapshots from their respective validation runs.
 
+## Follow-up CI timeout fixture correction (2026-10-19)
+
+The [next GitHub CI run](https://github.com/wangyu-geek/agent-terminal-bridge/actions/runs/39227663404/job/117977801974) reported a timeout waiting for the effect file in the new recovery-entrypoint test. Its 100ms execution deadline included local verification, persistence and control-client setup. Receiving `unknown` did not prove that the command had started. A controlled local reproduction delayed the last verification before input by 200ms: the request returned `TIMEOUT/unknown`, and the effect file never appeared.
+
+The recovery test and the executor's equivalent 150ms timeout test now use a bounded shell gate. The target writes a start marker, waits for explicit release, and only then performs its effect. The tests observe the marker and a two-second CLI timeout, verify that the effect has not happened, release the target, then verify its effect and recovery metadata. Duplicate execution of the old request must return the existing unknown record without replay. Production timeout and recovery behavior are unchanged.
+
+The same 200ms delayed-verification experiment with the gate returned `TIMEOUT/unknown`, had no effect before release, and completed the effect after release. An initial local run also hit a shell-preparation timeout; fresh workflow fixtures now wait for a unique prompt emitted by their owned Bash before calling `ready`, satisfying the manual-ready precondition instead of treating registration as shell readiness.
+
+Local verification on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- Final source: `bun run check` passed; system-Bash full suite **31 unit + 69 integration passed**; Homebrew-Bash workflow/executor files **25 passed**. No failures or skips in these completed final checks.
+- Before adding the prompt-only setup guard, both Bash selections passed the full **100-test** suite, and the two gated timeout cases repeated ten times each with Homebrew Bash passed **20/20**.
+- Native Linux, Bash 4.4, build/binary/smoke and real remote checks were not run for this test-only change. The corrected GitHub CI run remains pending.
+
 ## CI fixture correction (2026-10-19)
 
 The [first GitHub CI run](https://github.com/wangyu-geek/agent-terminal-bridge/actions/runs/39224977845) passed static checks but failed integration tests. The macOS Homebrew job reported four `ready` assertions receiving exit 6. A controlled local reproduction delayed input projection after a prompt was already visible: `ready` returned `BUSY` / `not_started` while the view held the resource lock. Completing a human-input round trip and waiting for its lock release made the same scenario return exit 0.

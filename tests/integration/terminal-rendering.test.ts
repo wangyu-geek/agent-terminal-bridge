@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { chmod, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Terminal } from "@xterm/headless"
-import { Fixture, root } from "../helpers.ts"
+import { closeTerminal, compatibleBash, Fixture, root } from "../helpers.ts"
 
 const integration = Bun.which("tmux") ? test : test.skip
 
@@ -36,12 +36,15 @@ integration(
       await rendering
     }
     try {
+      const bash = await compatibleBash()
+      if (!bash) throw new Error("Bash >=3.2 is required for this fixture")
+      f.env.ATB_FIXTURE_BASH = bash
       const bin = join(f.directory, "bin")
       await mkdir(bin, { mode: 0o700 })
       const ssh = join(bin, "ssh")
       await Bun.write(
         ssh,
-        "#!/bin/sh\nPS1='测试> '; export PS1\nexec /bin/bash --noprofile --norc\n",
+        "#!/bin/sh\nPS1='测试> '; export PS1\nexec \"$ATB_FIXTURE_BASH\" --noprofile --norc\n",
       )
       await chmod(ssh, 0o755)
       f.env.PATH = `${bin}:${f.env.PATH}`
@@ -78,6 +81,7 @@ integration(
       const binding = await f.binding("render-entry")
       f.sockets.add(binding.socketPath)
       for (let cycle = 0; cycle < 3; cycle++) {
+        await f.humanRoundTrip(owner.terminal, () => raw, binding.alias)
         const prepared = await f.cli([
           cycle === 0 ? "ready" : "resume",
           "--session-id",
@@ -87,6 +91,7 @@ integration(
           "5",
           "--json",
         ])
+        expect(prepared.result).toMatchObject({ ok: true, ready: true })
         expect(prepared.code).toBe(0)
         const command = `printf 'REPORT_${cycle}_%02d\\n' {1..24}`
         const result = await f.cli([
@@ -146,14 +151,13 @@ integration(
       }
       expect(raw).not.toContain("\x1b[?1049l")
     } finally {
-      if (owner?.exitCode === null) owner.kill("SIGTERM")
-      if (owner) {
-        await owner.exited
-        owner.terminal?.close()
+      try {
+        if (owner) await closeTerminal(owner)
+      } finally {
+        await rendering
+        terminal.dispose()
+        await f.cleanup()
       }
-      await rendering
-      terminal.dispose()
-      await f.cleanup()
     }
   },
   30000,

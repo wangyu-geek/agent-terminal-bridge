@@ -4,6 +4,21 @@
 
 Skill scope update (2026-10-19): supports only the current CLI `session_id` workflow; legacy compatibility references and fallback guidance were removed. Stop and prompt for a CLI update when a required capability is missing. Skill structure, documentation/examples, and package-content checks passed. The current tarball contains 20 files and one session-workflow reference. This update changed no runtime code and did not rerun the terminal matrix or real SSH. The execution and file-count details below are snapshots from their respective validation runs.
 
+## CI fixture correction (2026-10-19)
+
+The [first GitHub CI run](https://github.com/wangyu-geek/agent-terminal-bridge/actions/runs/39224977845) passed static checks but failed integration tests. The macOS Homebrew job reported four `ready` assertions receiving exit 6. A controlled local reproduction delayed input projection after a prompt was already visible: `ready` returned `BUSY` / `not_started` while the view held the resource lock. Completing a human-input round trip and waiting for its lock release made the same scenario return exit 0.
+
+The connect and rendering fixtures now use that round trip before handoff, without retrying `ready` or changing the production lock contract. Their fake SSH shells also use the validated `ATB_TEST_BASH` selection instead of always starting `/bin/bash`.
+
+The Linux system-Bash job reported six connect timeouts and dangling child processes. The shared cleanup helper now keeps the PTY open while the CLI exits, then closes it. Graceful shutdown has a three-second limit; exceeding it fails the test and kills only the owned fixture CLI. This addresses the premature-PTY-close path; Linux verification remains pending.
+
+Local evidence on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- Frozen dependency installation and `bun run check` passed.
+- `ATB_TEST_BASH=/bin/bash bun run test`: **31 unit + 69 integration passed, 0 failed, 0 skipped**.
+- The two affected integration files repeated five times with Homebrew Bash: **60 passed, 0 failed**.
+- Not run for this test-only change: native Linux, the Bash 4.4 matrix, builds and artifact smoke checks. The corrected GitHub matrix has not been rerun; no real remote session was used.
+
 ## Four round-two adjustments: implementation and verification
 
 | Adjustment | Current behavior and evidence |

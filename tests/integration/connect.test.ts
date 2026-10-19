@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { DirectoryLock } from "../../src/locking.ts"
 import { resourceKey } from "../../src/state.ts"
 import { Tmux } from "../../src/tmux.ts"
-import { Fixture, root } from "../helpers.ts"
+import { closeTerminal, compatibleBash, Fixture, root } from "../helpers.ts"
 
 const integration = Bun.which("tmux") ? test : test.skip
 const fixtures: Fixture[] = []
@@ -14,6 +14,9 @@ afterEach(async () => {
 async function fakeSsh() {
   const fixture = await Fixture.create()
   fixtures.push(fixture)
+  const bash = await compatibleBash()
+  if (!bash) throw new Error("Bash >=3.2 is required for this fixture")
+  fixture.env.ATB_FIXTURE_BASH = bash
   await unlink(
     join(fixture.directory, "config/agent-terminal-bridge/config.json"),
   )
@@ -22,7 +25,7 @@ async function fakeSsh() {
   const ssh = join(bin, "ssh")
   await Bun.write(
     ssh,
-    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ATB_FIXTURE_ARGS\"\nPS1='fixture-ready> '; export PS1\nexec /bin/bash --noprofile --norc\n",
+    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ATB_FIXTURE_ARGS"\nPS1=\'fixture-ready> \'; export PS1\nexec "$ATB_FIXTURE_BASH" --noprofile --norc\n',
   )
   await chmod(ssh, 0o755)
   fixture.env.PATH = `${bin}:${fixture.env.PATH ?? ""}`
@@ -157,15 +160,7 @@ integration(
       )
       const binding = await fixture.binding()
       fixture.sockets.add(binding.socketPath)
-      // The user must actually reach an idle shell before ready; the local
-      // "finish login" banner is intentionally not a remote readiness signal.
-      owner.process.terminal?.write("printf 'fixture-login-complete\\n'\r")
-      await until(async () =>
-        owner
-          .output()
-          .split(/[\r\n]+/)
-          .includes("fixture-login-complete"),
-      )
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       const prepared = await fixture.cli([
         "ready",
         "--session-id",
@@ -261,6 +256,7 @@ integration(
       )
       const binding = await fixture.binding()
       fixture.sockets.add(binding.socketPath)
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       expect(
         (await fixture.cli(["ready", "--confirm", "--timeout", "3", "--json"]))
           .code,
@@ -347,6 +343,7 @@ integration(
       )
       const binding = await fixture.binding()
       fixture.sockets.add(binding.socketPath)
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       expect(
         (await fixture.cli(["ready", "--confirm", "--timeout", "3", "--json"]))
           .code,
@@ -399,6 +396,7 @@ integration(
       )
       const old = await fixture.binding()
       fixture.sockets.add(old.socketPath)
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       expect(
         (
           await fixture.cli([
@@ -483,9 +481,7 @@ integration(
   20000,
 )
 async function close(owner: ReturnType<typeof terminal>) {
-  if (owner.process.exitCode === null) owner.process.kill("SIGTERM")
-  owner.process.terminal?.close()
-  await owner.process.exited
+  await closeTerminal(owner.process)
 }
 async function until(condition: () => Promise<boolean>) {
   const deadline = performance.now() + 8000
@@ -586,20 +582,12 @@ integration(
         ]),
       ).toContain(`session_id=${binding.id}`)
       expect(owner.output()).toContain(binding.id)
-      // Session registration precedes the writable view's initial snapshot.
-      // Complete an explicit manual input round trip before handing it over.
       await until(
         async () =>
           owner.output().includes("[You control input]") &&
           owner.output().includes("fixture-ready> "),
       )
-      owner.process.terminal?.write("printf 'handoff-ready\\n'\r")
-      await until(async () =>
-        owner
-          .output()
-          .split(/[\r\n]+/)
-          .includes("handoff-ready"),
-      )
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       const prepared = await fixture.cli([
         "ready",
         "--session-id",

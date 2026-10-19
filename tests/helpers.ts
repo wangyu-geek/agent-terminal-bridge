@@ -8,8 +8,9 @@ import {
 } from "node:fs/promises"
 import { hostname, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { digest } from "../src/locking.ts"
+import { digest, inspectDirectoryLock } from "../src/locking.ts"
 import type { Binding } from "../src/models.ts"
+import { resourceKey } from "../src/state.ts"
 import { paneTarget, Tmux } from "../src/tmux.ts"
 
 export const root = resolve(import.meta.dir, "..")
@@ -185,6 +186,32 @@ export class Fixture {
     }
     throw new Error("Expected terminal content did not arrive")
   }
+  async humanRoundTrip(
+    terminal: Bun.Terminal | undefined,
+    output: () => string,
+    name = "remote",
+  ) {
+    if (!terminal) throw new Error("A fixture PTY is required")
+    const binding = await this.binding(name)
+    const marker = `human-ready-${crypto.randomUUID()}`
+    // The banner/prompt may precede the view's initial input projection. Human
+    // input waits for that projection; ready must not race its resource lock.
+    terminal.write(`printf '${marker}\\n'\r`)
+    const deadline = performance.now() + 8000
+    while (
+      !output()
+        .split(/[\r\n]+/)
+        .includes(marker) ||
+      (await inspectDirectoryLock(
+        join(this.statePath, "locks"),
+        resourceKey(binding),
+      )) !== "free"
+    ) {
+      if (performance.now() > deadline)
+        throw new Error("Fixture human input did not finish before handoff")
+      await Bun.sleep(20)
+    }
+  }
   async cleanup() {
     for (const socket of this.sockets) {
       try {
@@ -201,6 +228,32 @@ export class Fixture {
       }
     }
     await rm(this.directory, { recursive: true, force: true })
+  }
+}
+
+export async function closeTerminal(child: Bun.Subprocess) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    if (child.exitCode === null) child.kill("SIGTERM")
+    await Promise.race([
+      child.exited,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error("Fixture terminal did not exit after SIGTERM")),
+          3000,
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+    // Keep draining the PTY while the CLI restores terminal state and closes
+    // its control client. Closing the master first can strand Linux teardown.
+    if (child.exitCode === null) {
+      child.kill("SIGKILL")
+      await child.exited
+    }
+    child.terminal?.close()
   }
 }
 

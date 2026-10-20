@@ -4,6 +4,23 @@
 
 Skill scope update (2026-10-19): supports only the current CLI `session_id` workflow; legacy compatibility references and fallback guidance were removed. Stop and prompt for a CLI update when a required capability is missing. Skill structure, documentation/examples, and package-content checks passed. The current tarball contains 20 files and one session-workflow reference. This update changed no runtime code and did not rerun the terminal matrix or real SSH. The execution and file-count details below are snapshots from their respective validation runs.
 
+## CI menu snapshot and handoff input correction (2026-10-20)
+
+The [reported CI job](https://github.com/wangyu-geek/agent-terminal-bridge/actions/runs/39392902899/job/118528476965) failed both manual-bastion cases while waiting for the first menu. Public annotations for the other three matrix jobs show the same two waits. The macOS Homebrew job additionally lost the first manual command after an external CLI takeover: its view printed an input-blocked notice before completing the input-row projection.
+
+The menu cases now create the local fake SSH session and wait for its prompt before attaching the view, explicitly forcing the capture-pane startup path. This reproduced both failures locally: the snapshot contains `Select server>` followed by a newline/cursor projection, while the old assertion requires a trailing space. The assertion now checks the prompt text without requiring that rendered whitespace. Timeout diagnostics include a bounded tail of the owned fake-terminal view. The deadlines are unchanged.
+
+[The viewer](../src/terminal.ts) now serializes its own input-row projection and human sends through one local queue. Previously a sender could await the prior projection promise, then race a newly scheduled projection for the resource lock and discard a human-owned batch as BUSY. Each send still takes the cross-process resource lock and verifies received/current ownership, generation and nonce; Agent-owned and pending-takeover input remain discarded.
+
+Twenty ordinary parallel runs of the external-handoff case passed before this change, so they did not reproduce the CI race. A separate controlled experiment in temporary source copies held the row projection's resource lock for 300ms and paused an already-admitted sender for 50ms before lock acquisition. The old viewer failed with the same input-blocked/lost-command signature; the serial-queue viewer accepted the command. That experiment also exposed a subsequent resume race in the test, which now completes a human-input round trip and waits for lock release before calling resume. The final controlled before/after comparison failed on the old viewer and passed on the new one. These timing probes were not added to production code.
+
+Local validation uses an isolated copy of commit 96f7028 plus this correction, excluding unrelated working-tree changes, on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- Static/type/documentation checks passed. Full suites with system Bash 3.2 and Homebrew Bash 5.3 each passed **31 unit + 71 integration tests, 0 failed, 0 skipped**.
+- After the final resume setup adjustment, the connect file passed **13/13** with each Bash in the working tree; the three reported cases also passed with both Bash selections in isolation (**6/6**).
+- Bundle and native binary builds, and both artifact smoke checks, passed.
+- Native Linux, Bash 4.4, and a new GitHub CI run have not been executed for this correction. No real bastion or business terminal was used. The four-job GitHub matrix remains the final cross-platform check.
+
 ## Default SSH locale cleanup (2026-10-20)
 
 The operator compared the same OpenSSH 10.2 client in two local terminal applications. Both keystroke-timing settings failed in one application; another application entered the target but reported an asciinema encoding error. Local SSH debug logs showed different forwarded locale/terminal variables. The operator then cleared LANG, LC_ALL, LC_CTYPE, LC_TERMINAL and LC_TERMINAL_VERSION for a manual SSH invocation and reported repeated successful login without visible locale/recorder errors. This supports the environment group as a compatibility factor; it does not identify one variable or the failing remote process. Debug flags and unrelated SSH options in that diagnostic command were not adopted as product defaults.

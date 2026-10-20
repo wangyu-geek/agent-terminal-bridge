@@ -42,6 +42,8 @@ Output is `shared_pty_between_frames`, not isolated stdout/stderr. Background/sy
 
 Default view state changes reset mouse/style modes without restoring a saved terminal cursor. When human input resumes, a resource-locked local snapshot of the pane's cursor row/column is projected below the transcript using terminal cell coordinates. No remote Enter or input-clearing keys are sent. Renderer tests check actual cell contents after Unicode prompts, long output, editing and repeated handoffs.
 
+Input-row projection and human sends from the same viewer share a local serial queue. This prevents the viewer's own projection from causing a BUSY input rejection just after an external CLI handoff. It does not replace the resource lock or defer Agent-owned input until takeover: each batch still checks its received and current ownership, generation and nonce under the cross-process lock.
+
 Display names point to current bindings; retired bindings are stored by immutable ID before a name can be reused. Historical status/request read original task metadata; terminal mutations reject ARCHIVED_SESSION. Saved unknown results are neither acknowledged nor replayed by connection replacement. Local socket/process permission failures report LOCAL_ACCESS_DENIED/unverified and do not establish endpoint loss.
 
 ## Durable coordination

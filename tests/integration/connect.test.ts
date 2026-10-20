@@ -73,6 +73,21 @@ for (const existingServer of [false, true]) {
         for (const variable of Object.keys(clientLocale))
           fixture.env[variable] = undefined
       }
+      // Force the prompt to exist before the view attaches, so startup must
+      // work through capture-pane rather than depend on fresh streamed bytes.
+      expect(
+        (
+          await fixture.cli([
+            "start",
+            "--ssh",
+            "bastion-example",
+            "--session",
+            "remote",
+            "--json",
+          ])
+        ).code,
+      ).toBe(0)
+      await fixture.untilCapture((output) => output.includes("Select server>"))
       const owner = terminal(fixture, [
         "connect",
         "bastion-example",
@@ -87,8 +102,8 @@ for (const existingServer of [false, true]) {
           const binding = entries.find((entry) => entry.session === "remote")
           if (!binding) return false
           fixture.sockets.add((await fixture.binding()).socketPath)
-          return owner.output().includes("Select server> ")
-        })
+          return owner.output().includes("Select server>")
+        }, owner.output)
         expect(owner.output()).toContain("Terminal: screen-256color")
         expect(owner.output()).toContain("Locale variables present: []")
         expect(owner.output()).toContain(
@@ -604,11 +619,16 @@ integration(
 async function close(owner: ReturnType<typeof terminal>) {
   await closeTerminal(owner.process)
 }
-async function until(condition: () => Promise<boolean>) {
+async function until(
+  condition: () => Promise<boolean>,
+  details?: () => string,
+) {
   const deadline = performance.now() + 8000
   while (!(await condition())) {
     if (performance.now() > deadline)
-      throw new Error("Expected terminal state did not arrive")
+      throw new Error(
+        `Expected terminal state did not arrive${details ? `\nOwned test view: ${details().slice(-6000)}` : ""}`,
+      )
     await Bun.sleep(20)
   }
 }
@@ -758,6 +778,7 @@ integration(
           `${String(error)}\nOwned test view: ${owner.output().slice(-6000)}`,
         )
       }
+      await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       expect(
         (
           await fixture.cli([

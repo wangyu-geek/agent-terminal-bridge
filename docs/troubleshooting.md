@@ -36,6 +36,8 @@ If Ctrl+] appears unresponsive, current views recognize its raw control byte and
 
 A handoff projects the current terminal input row below the transcript locally. It does not send a remote newline. Ordinary view/menu changes do not restore a saved cursor. If input overlaps earlier records, verify that the newly opened view uses the current binary; an already running view does not hot-update. Long output and editing are covered by a terminal-renderer regression test.
 
+If a view blocks the first keystrokes immediately after an external CLI takeover, update and reopen the view. Projection and input forwarding now share a local queue so they cannot contend for their own resource lock. Other writers and Agent ownership still block input, and blocked input is never replayed automatically.
+
 ## SSH locale inheritance
 
 Managed SSH startup automatically removes `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_TERMINAL` and `LC_TERMINAL_VERSION`. This applies to all SSH aliases through connect, start --ssh and explicit reconnect, with no additional configuration. Clearing happens inside the new pane immediately before SSH, so an already running tmux server cannot reintroduce its saved values. The server's own environment and existing panes are unchanged. PATH, SSH_AUTH_SOCK, other variables and explicit OpenSSH SetEnv settings remain effective; local start shells and externally bound panes are unchanged.

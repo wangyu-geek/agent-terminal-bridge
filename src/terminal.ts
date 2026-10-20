@@ -26,7 +26,7 @@ export class SharedTerminal {
     let done: "detach" | "reconnect" | null = null
     let menu = false
     let takingOver = false
-    let inputDisplay = Promise.resolve()
+    let humanWork = Promise.resolve()
     let inputEpoch = 0
     let ended = false
     let blockedNotice = false
@@ -45,6 +45,12 @@ export class SharedTerminal {
       connectionWork = work.catch(() => {})
       return work
     }
+    // A projection and a send from this viewer must not contend for its own
+    // resource lock after an external handoff makes human input writable.
+    const humanAction = (action: () => Promise<void>) => {
+      humanWork = humanWork.then(action)
+      return humanWork
+    }
     const write = (text: string | Uint8Array) => {
       requireValue(
         process.stdout.writableLength + Buffer.byteLength(text) <= 1048576,
@@ -62,7 +68,7 @@ export class SharedTerminal {
       )
     const humanOutput = new HumanTerminalOutput(write)
     const positionInput = () => {
-      inputDisplay = inputDisplay.then(async () => {
+      return humanAction(async () => {
         const deadline = performance.now() + 1000
         while (true) {
           try {
@@ -99,7 +105,6 @@ export class SharedTerminal {
           }
         }
       })
-      return inputDisplay
     }
     const showMenu = () => {
       menu = true
@@ -156,47 +161,48 @@ export class SharedTerminal {
     }
     const forward = async (bytes: Uint8Array, received: Binding) => {
       if (!bytes.length || ended) return
-      await inputDisplay
-      try {
-        await withLock(
-          this.sessions.state.locks,
-          resourceKey(initial),
-          async () => {
-            const current = await this.sessions.state.load(name)
-            requireValue(
-              current.id === initial.id,
-              "BINDING_CHANGED",
-              "Session identity changed",
-              4,
-            )
-            requireValue(
-              received.control === "human" &&
-                current.control === "human" &&
-                received.generation === current.generation &&
-                received.shell.nonce === current.shell.nonce,
-              "INPUT_OWNED",
-              "Agent controls input",
-              5,
-            )
-            await this.sessions.verify(current, true)
-            await connection(async () => {
-              await control?.sendBytes(bytes, false, performance.now() + 5000)
-            })
-          },
-        )
-      } catch (error) {
-        if (
-          !(error instanceof BridgeError) ||
-          !["BUSY", "INPUT_OWNED"].includes(error.code)
-        )
-          throw error
-        if (!blockedNotice) {
-          write(
-            "\n[Input blocked while Agent operates] Press ? then t to take over; Ctrl+] also opens the menu. Scroll/select/copy remain available.\n",
+      await humanAction(async () => {
+        try {
+          await withLock(
+            this.sessions.state.locks,
+            resourceKey(initial),
+            async () => {
+              const current = await this.sessions.state.load(name)
+              requireValue(
+                current.id === initial.id,
+                "BINDING_CHANGED",
+                "Session identity changed",
+                4,
+              )
+              requireValue(
+                received.control === "human" &&
+                  current.control === "human" &&
+                  received.generation === current.generation &&
+                  received.shell.nonce === current.shell.nonce,
+                "INPUT_OWNED",
+                "Agent controls input",
+                5,
+              )
+              await this.sessions.verify(current, true)
+              await connection(async () => {
+                await control?.sendBytes(bytes, false, performance.now() + 5000)
+              })
+            },
           )
-          blockedNotice = true
+        } catch (error) {
+          if (
+            !(error instanceof BridgeError) ||
+            !["BUSY", "INPUT_OWNED"].includes(error.code)
+          )
+            throw error
+          if (!blockedNotice) {
+            write(
+              "\n[Input blocked while Agent operates] Press ? then t to take over; Ctrl+] also opens the menu. Scroll/select/copy remain available.\n",
+            )
+            blockedNotice = true
+          }
         }
-      }
+      })
     }
     const input = async (bytes: Buffer, epoch: number, received: Binding) => {
       if (done || epoch !== inputEpoch) return
@@ -423,7 +429,7 @@ export class SharedTerminal {
       process.off("SIGTERM", stop)
       process.off("SIGHUP", stop)
       process.stdin.setRawMode(wasRaw)
-      await Promise.allSettled([inputWork, resizeWork, inputDisplay])
+      await Promise.allSettled([inputWork, resizeWork, humanWork])
       await control?.close()
       resetLocalModes()
       write("\n[Left shared terminal; remote jobs were not interrupted]\n")

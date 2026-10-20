@@ -65,6 +65,10 @@ remote-terminal connect bastion
 
 密码、MFA 和服务器选择由你亲自完成。本地 Bridge 横幅会在登录前显示完整 `session_id`；`list`/`status` 返回相同 ID。这个 ID 不用于识别或认证远端机器。
 
+Bridge 启动受管 SSH 时会自动移除 `LANG`、`LC_ALL`、`LC_CTYPE`、`LC_TERMINAL` 和 `LC_TERMINAL_VERSION`，避免继承的本机终端/locale 值覆盖服务端默认环境，用户无需新增 Bridge 配置。其他环境变量和用户显式的 OpenSSH 设置继续生效。`start --ssh` 和新版程序发起的重连也采用该行为；已有连接保留原环境。更新后运行 `remote-terminal connect bastion --new`，在新连接中手工登录即可应用。另见 [locale 排查](docs/troubleshooting.md#ssh-locale-inheritance)。
+
+新建的受管 pane 使用 `TERM=screen-256color`，以兼容较旧的 SSH 主机。Bridge 不安装远端终端定义，也不修改全局 tmux 配置；主机仍需认识该终端类型。若旧版本出现 `tmux-256color: unknown terminal type`，更新后先退出旧视图，再用新程序运行 `connect bastion --new`，手工完成登录。已有连接仍保留原终端类型。另见[终端兼容性排查](docs/troubleshooting.md#terminal-interaction)。
+
 选定服务器的 shell 空闲且就绪后，告诉 Agent：
 
 > 我已经登录，可以接管共享终端，帮我检查磁盘使用情况。

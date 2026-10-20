@@ -161,6 +161,14 @@ export class Sessions {
     const result = await tmux.run([
       "-f",
       configPath,
+      // tmux's build-dependent default may be unknown on older SSH targets.
+      // Queue this before creation: -f is ignored by an already running server,
+      // and new-session -e TERM is overridden by tmux's default-terminal.
+      "set-option",
+      "-g",
+      "default-terminal",
+      "screen-256color",
+      ";",
       "new-session",
       "-d",
       "-P",
@@ -172,7 +180,26 @@ export class Sessions {
       "160",
       "-y",
       "48",
-      ...(ssh ? ["ssh", "-tt", ssh] : ["/bin/sh"]),
+      // Remove locale at the SSH boundary, after tmux builds the pane's
+      // environment. An existing server may still retain the client's values.
+      ...(ssh
+        ? [
+            "/usr/bin/env",
+            "-u",
+            "LANG",
+            "-u",
+            "LC_ALL",
+            "-u",
+            "LC_CTYPE",
+            "-u",
+            "LC_TERMINAL",
+            "-u",
+            "LC_TERMINAL_VERSION",
+            "ssh",
+            "-tt",
+            ssh,
+          ]
+        : ["/bin/sh"]),
     ])
     const paneId = result.trim()
     requireValue(

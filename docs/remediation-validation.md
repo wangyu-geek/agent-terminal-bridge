@@ -1,8 +1,40 @@
 # Remediation Implementation and Acceptance Record
 
-> Updated 2026-10-19. See the [remediation plan](remediation-plan.md). The four adjustments in round two have implementation, local regression, and ordinary SSH evidence from the final binary; overall user acceptance is still incomplete. The automation records below do not replace validation with a real bastion, first-time users, or native terminal gestures. Code/test evidence links apply to a source checkout; release packages do not include source or tests.
+> Updated 2026-10-20. See the [remediation plan](remediation-plan.md). The four adjustments in round two have implementation, local regression, and ordinary SSH evidence from the final binary; overall user acceptance is still incomplete. The automation records below do not replace validation with a real bastion, first-time users, or native terminal gestures. Code/test evidence links apply to a source checkout; release packages do not include source or tests.
 
 Skill scope update (2026-10-19): supports only the current CLI `session_id` workflow; legacy compatibility references and fallback guidance were removed. Stop and prompt for a CLI update when a required capability is missing. Skill structure, documentation/examples, and package-content checks passed. The current tarball contains 20 files and one session-workflow reference. This update changed no runtime code and did not rerun the terminal matrix or real SSH. The execution and file-count details below are snapshots from their respective validation runs.
+
+## Default SSH locale cleanup (2026-10-20)
+
+The operator compared the same OpenSSH 10.2 client in two local terminal applications. Both keystroke-timing settings failed in one application; another application entered the target but reported an asciinema encoding error. Local SSH debug logs showed different forwarded locale/terminal variables. The operator then cleared LANG, LC_ALL, LC_CTYPE, LC_TERMINAL and LC_TERMINAL_VERSION for a manual SSH invocation and reported repeated successful login without visible locale/recorder errors. This supports the environment group as a compatibility factor; it does not identify one variable or the failing remote process. Debug flags and unrelated SSH options in that diagnostic command were not adopted as product defaults.
+
+At the operator's request, [managed SSH creation](../src/session.ts) now removes those five variables by default, without a new config section or SSH-alias special case. The pane starts local `/usr/bin/env -u … ssh -tt ALIAS` using separate arguments after tmux has assembled its environment, covering old server environments as well as clean new clients. The same creation path serves connect, start --ssh and explicit reconnect. It leaves server-global values, local shells, external/existing panes, other variables and explicit OpenSSH settings intact. Previously proposed ssh_entries/locale configuration was not implemented.
+
+The expanded [start tests](../tests/integration/session.test.ts) and [PTY connect tests](../tests/integration/connect.test.ts) failed before the change because all five variables remained set. They then passed, verifying absence at the fake SSH boundary, preservation of SSH_AUTH_SOCK/other variables, unchanged old-server environment, manual selection/MFA, and cleanup after explicit r reconnect while old unknown metadata remains intact. No real credentials or remote sessions are used by these tests.
+
+Local evidence on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- Frozen dependency installation and `bun run check` passed.
+- `ATB_TEST_BASH=/bin/bash bun run test` on the isolated commit contents: **31 unit + 71 integration passed, 0 failed, 0 skipped**.
+- The affected session/connect files also passed with Homebrew Bash 5.3: **23 passed, 0 failed, 0 skipped**.
+- Bundle and native macOS arm64 binary builds passed. Both artifact smoke runs passed from isolated directories: a local shell retains LANG, while fake SSH on the same already-running server receives none of the five variables.
+- Not run for this change: native Linux/tmux 3.2, Bash 4.4, installed tarball smoke, or a new real bastion session using the rebuilt Bridge. The operator's successful manual OpenSSH check is separate evidence. First-login MFA and server-side recording acceptance remain pending; absence of a visible recorder error alone does not prove recording completeness.
+
+## Managed terminal compatibility correction (2026-10-20)
+
+The operator reported an SSH exit during target selection/MFA, while direct manual SSH worked. The supplied transcript also contained `tmux-256color: unknown terminal type`. This establishes a terminal compatibility defect, but does not prove why the real bastion ended the session.
+
+[Managed creation](../src/session.ts) now queues `default-terminal=screen-256color` before creating a pane on the private tmux server. A local probe verified that `new-session -e TERM=screen-256color` alone is overwritten by tmux; changing only the startup config also cannot update an already running server. Existing pane environments, external bindings and user-global tmux configuration are unchanged. A new connection from the updated executable is required to use the corrected type.
+
+[Local bastion tests](../tests/integration/connect.test.ts) failed before the fix with the unknown-terminal warning, then passed after it, covering both a new server and a private server retaining the old default. A shell fixture models an older host accepting screen/xterm terminal types, waits for server selection, then reads a synthetic verification code without echo. Tests verify that one Enter reaches MFA, waits for manual input, and leaves the shell uninitialized and human-controlled. These tests do not invoke real SSH or establish support for a particular organizational bastion.
+
+Local evidence on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- Frozen dependency installation and `bun run check` passed.
+- `ATB_TEST_BASH=/bin/bash bun run test`: **31 unit + 71 integration passed, 0 failed, 0 skipped**, including real local PTYs and Bash 3.2.57.
+- The full connect test file also passed with Homebrew Bash 5.3: **13 passed, 0 failed, 0 skipped**.
+- Bundle and macOS arm64 binary builds passed. Both artifacts passed smoke checks from an isolated directory, including an execution assertion that `TERM=screen-256color` reaches the target shell.
+- Not run for this correction: native Linux/tmux 3.2, Bash 4.4, tarball installation, native terminal UI acceptance, or real SSH/bastion validation. No real authentication material was added to fixtures or documentation. Real bastion acceptance remains pending.
 
 ## Follow-up CI timeout fixture correction (2026-10-19)
 

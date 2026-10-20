@@ -36,6 +36,23 @@ for (const artifact of [
       join(directory, ".env"),
       `XDG_STATE_HOME=${directory}/wrong-state\nATB_SMOKE_POISON=unexpected\n`,
     )
+    const bin = join(f.directory, "fake-bin")
+    await mkdir(bin, { mode: 0o700 })
+    await writeFile(
+      join(bin, "ssh"),
+      `#!/bin/sh\numask 077\nprintf '%s%s%s%s%s' "\${LANG+x}" "\${LC_ALL+x}" "\${LC_CTYPE+x}" "\${LC_TERMINAL+x}" "\${LC_TERMINAL_VERSION+x}" > "$ATB_SMOKE_LOCALE_REPORT"\nexec /bin/sh\n`,
+      { mode: 0o700 },
+    )
+    const localeReport = join(f.directory, "ssh-locale-report")
+    Object.assign(f.env, {
+      PATH: `${bin}:${f.env.PATH ?? ""}`,
+      ATB_SMOKE_LOCALE_REPORT: localeReport,
+      LANG: "C",
+      LC_ALL: "C",
+      LC_CTYPE: "C",
+      LC_TERMINAL: "fixture-terminal",
+      LC_TERMINAL_VERSION: "1.2",
+    })
     const call = async (args: string[], doctor = false) => {
       const child = Bun.spawn([binary, ...args, "--json"], {
         cwd: directory,
@@ -89,14 +106,24 @@ for (const artifact of [
       "package-smoke",
       "--timeout",
       "3",
-      `printf '%s' "\${ATB_SMOKE_POISON:-clean}"`,
+      `printf '%s|%s|%s' "\${ATB_SMOKE_POISON:-clean}" "$TERM" "$LANG"`,
     ])
     assert.equal(result.completed, true)
-    assert.equal(result.terminal_output, "clean")
+    assert.equal(result.terminal_output, "clean|screen-256color|C")
     await call(["takeover", "--session-id", binding.id, "--confirm"])
+    await call(["start", "--ssh", "bastion-smoke", "--session", "ssh-smoke"])
+    const ssh = await f.binding("ssh-smoke")
+    f.sockets.add(ssh.socketPath)
+    const deadline = performance.now() + 3000
+    while (!(await Bun.file(localeReport).exists())) {
+      assert(performance.now() < deadline, "Fake SSH did not write its report")
+      await Bun.sleep(10)
+    }
+    assert.equal(await Bun.file(localeReport).text(), "")
+    await call(["stop", "--session-id", ssh.id, "--confirm"])
     await call(["stop", "--confirm"])
     console.log(
-      `${artifact}: isolated startup, embedded bootstrap/helper, automatic ready and real execution passed`,
+      `${artifact}: isolated startup, embedded helper, execution and default SSH locale cleanup passed`,
     )
   } finally {
     await f.cleanup()

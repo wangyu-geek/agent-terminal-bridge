@@ -24,6 +24,10 @@ LOCAL_ACCESS_DENIED (exit 5) with binding unverified means local access is block
 
 ## Terminal interaction
 
+If login prints `'tmux-256color': unknown terminal type.`, the remote environment does not recognize the terminal type inherited from an older Bridge pane. Current managed panes explicitly use `screen-256color`, including when the private tmux server was already running. Update the executable, detach the old view, then run `remote-terminal connect bastion --new` and authenticate manually. Replace `bastion` with your SSH alias. Existing panes and externally bound terminals are unchanged; restarting only the viewer cannot change an SSH PTY's terminal type. Do not stop unrelated sessions or change global tmux settings to apply this fix.
+
+`Connection to … closed.` comes from SSH; `Connection ended. Old results may be unknown.` is the local view reporting that the connection ended. A terminal-type warning is a compatibility defect, but does not by itself establish the reason the server closed the connection. If it persists after a fresh connection with the updated binary, compare manual `ssh bastion` against the same target and check bastion authentication/session diagnostics. Bridge does not retry MFA or infer that authentication succeeded.
+
 Use the default connect view for readable command text, streaming output and terminal-native scroll/drag-select/copy. While the Agent controls input, ? opens a local menu (local_menu_help capability); Ctrl+] also opens it in human mode; t requests takeover, c continues viewing, q detaches. Typing is blocked while the Agent controls the remote shell, but local controls remain available. An SSH process that exited produces a Connection ended menu: r explicitly creates a new connection in the same window, with manual authentication and a new session_id. Old unknown results remain unchanged.
 
 An old native tmux attach window uses tmux's original read-only/full-screen behavior. Ctrl+b, release, d detaches it (without stopping SSH). Then run the current executable's `connect` and choose the session to use the new view. Check terminal_view and local_reconnect capabilities first. A healthy existing connection can be reused; an ended connection offers r. Reopening a view does not replay historical command output.
@@ -31,6 +35,14 @@ An old native tmux attach window uses tmux's original read-only/full-screen beha
 If Ctrl+] appears unresponsive, current views recognize its raw control byte and CSI u/Kitty/modifyOtherKeys encodings, including split sequences. [iTerm2 documents different Control-key encoding in CSI u mode](https://iterm2.com/documentation-csiu.html). Use ? while Agent input is blocked; this does not require terminal-setting changes. Upgrading an executable does not update an already running view. If that view has no usable menu, ask the Agent to call takeover for the exact session; no second SSH login is needed. Do not guess among multiple sessions.
 
 A handoff projects the current terminal input row below the transcript locally. It does not send a remote newline. Ordinary view/menu changes do not restore a saved cursor. If input overlaps earlier records, verify that the newly opened view uses the current binary; an already running view does not hot-update. Long output and editing are covered by a terminal-renderer regression test.
+
+## SSH locale inheritance
+
+Managed SSH startup automatically removes `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_TERMINAL` and `LC_TERMINAL_VERSION`. This applies to all SSH aliases through connect, start --ssh and explicit reconnect, with no additional configuration. Clearing happens inside the new pane immediately before SSH, so an already running tmux server cannot reintroduce its saved values. The server's own environment and existing panes are unchanged. PATH, SSH_AUTH_SOCK, other variables and explicit OpenSSH SetEnv settings remain effective; local start shells and externally bound panes are unchanged.
+
+If one local terminal disconnects during bastion selection while another enters with locale/asciinema errors, compare the environment actually sent by SSH. A prompt accompanied by recorder startup errors is not a clean acceptance result. The default cleanup lets the server choose its own locale; it does not force C.UTF-8, disable recording, downgrade OpenSSH, or change authentication/connection-sharing options. It addresses the observed inherited-environment difference without claiming a specific variable caused every disconnect.
+
+Update the executable and create a new connection with `remote-terminal connect bastion --new`, then authenticate manually. Reopening the viewer of an existing SSH process does not change that process's environment. First-login MFA and recording behavior still need real bastion acceptance. Do not add the previously proposed ssh_entries configuration: it was not implemented and the strict config parser does not accept it.
 
 ## Unknown execution
 

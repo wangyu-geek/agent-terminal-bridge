@@ -214,7 +214,9 @@ exec ssh -tt bastion
 
 也可以显式使用 `start --ssh bastion`，由 Bridge 将 SSH 作为 pane 主进程启动，再由用户 attach 完成认证。此选项只接受校验过的 SSH 配置别名，并使用参数数组启动进程，不接受任意 shell 启动字符串。
 
-Bridge 不自动输入认证信息，不增加未授权的连接路径，不默认改变 SSH 审计、终端类型、语言或 ControlMaster 配置。
+Bridge 不自动输入认证信息，不增加未授权的连接路径，不默认改变 SSH 审计或 ControlMaster 配置。受管理 pane 在创建前明确设置 tmux 的 default-terminal 为 screen-256color，避免随本机 tmux 编译默认值采用远端不认识的 tmux-256color。此设置仅作用于 Bridge 私有 tmux server 的新 pane；复用旧 server 时也须在创建前应用，不修改外部绑定、已有 pane 的环境或用户全局 tmux 配置。SSH 仍由 OpenSSH 按 pane 的 TERM 申请远端 PTY，不自动探测远端 terminfo 或安装终端定义。
+
+所有由 Bridge 新建的 SSH 进程默认移除 LANG、LC_ALL、LC_CTYPE、LC_TERMINAL、LC_TERMINAL_VERSION，不新增配置或按公司/入口名特判；远端 locale 由服务端默认环境和用户明确的 SSH 设置决定。connect、start --ssh 和显式 r 重连共用此行为。tmux 完成 pane 环境组装后，以参数数组启动本机 /usr/bin/env -u … ssh -tt SSH_ALIAS，不经本地 shell 拼接；env 随后 exec SSH，保留同一个 pane 主进程 PID。仅清理 Bridge 启动进程自身的环境不足以处理旧 tmux server 中保留的变量，因此清理必须位于 SSH 子进程边界。其他变量（包括 PATH、SSH_AUTH_SOCK 和其余 LC_*）、本地 start shell、Bridge 进程、tmux server 环境和已有/外部 pane 均保持原状。仍尊重用户 OpenSSH 配置中的显式 SetEnv，不强设本机 locale 到远端，不关闭录制或认证。更新二进制后使用 --new 或从新版视图显式重连，已有连接不会自动替换。
 
 ### 4.4 连接选择与名称历史
 
@@ -929,6 +931,8 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 | 配置影响 | synchronize-panes、外部 pipe、客户端尺寸变化、多 pane 内容不得扩散或越界 |
 | 状态 | pane 存活而 SSH 已退出、菜单、vim/top、未知提示符不被判定为远端 ready |
 | 输入 | 引号、反斜杠、分号、前导连字符、Unicode、CR/LF/ESC/NUL、超长输入 |
+| 人工登录 | 新建/复用旧 managed server 的 pane 均使用 screen-256color；本地模拟堡垒机选择目标后单次 Enter 进入 MFA 并等待人工输入，不重复换行或自动准备 shell；真实堡垒机仍需人工验收 |
+| SSH 环境 | 默认移除规定的五个变量，无需配置；旧 server 保留原值且新客户端已清理时仍生效；PATH/SSH agent/其他变量、本地 shell 不受影响；显式重连同样生效 |
 | shell 协议 | 专用函数缺失、初始化代次不符、不兼容 Bash 设置、回显不触发完成 |
 | 采集 | 任意字节分片、CR 重绘、ANSI/OSC、非法 UTF-8、无换行、大输出与慢消费者 |
 | 输出归属 | 后台噪声不会被宣称为独立 stdout；截断与完成状态相互独立 |

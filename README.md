@@ -65,6 +65,10 @@ remote-terminal connect bastion
 
 Complete passwords, MFA and server selection yourself. The local Bridge banner shows the full session_id before login; list/status return the same ID. It does not identify or authenticate the remote machine.
 
+Bridge automatically removes `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_TERMINAL` and `LC_TERMINAL_VERSION` when starting managed SSH, so inherited local terminal/locale values do not override the server's default environment. No Bridge configuration is needed. Other environment variables and explicit OpenSSH settings remain in effect. This also applies to `start --ssh` and reconnects created by the updated executable; existing connections keep their original environment. Use `remote-terminal connect bastion --new` to apply it to a fresh login. [Locale troubleshooting](docs/troubleshooting.md#ssh-locale-inheritance).
+
+New managed panes use `TERM=screen-256color` for compatibility with older SSH hosts. Bridge does not install remote terminfo or change global tmux configuration; the host must recognize this terminal type. After updating from a version that showed `tmux-256color: unknown terminal type`, leave the old view and run the updated executable with `connect bastion --new`, then authenticate manually. Existing connections keep their original terminal type. [Terminal compatibility troubleshooting](docs/troubleshooting.md#terminal-interaction).
+
 When the selected server's shell is idle and ready, tell your Agent:
 
 > I'm logged in. You can take over and check disk usage in the shared terminal.

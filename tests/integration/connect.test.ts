@@ -11,7 +11,7 @@ const fixtures: Fixture[] = []
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.cleanup()
 })
-async function fakeSsh() {
+async function fakeSsh(login = false) {
   const fixture = await Fixture.create()
   fixtures.push(fixture)
   const bash = await compatibleBash()
@@ -25,12 +25,113 @@ async function fakeSsh() {
   const ssh = join(bin, "ssh")
   await Bun.write(
     ssh,
-    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ATB_FIXTURE_ARGS"\nPS1=\'fixture-ready> \'; export PS1\nexec "$ATB_FIXTURE_BASH" --noprofile --norc\n',
+    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ATB_FIXTURE_ARGS"\n' +
+      (login
+        ? 'exec "$ATB_FIXTURE_BASH" --noprofile --norc "$ATB_FIXTURE_LOGIN"\n'
+        : "PS1='fixture-ready> '; export PS1\nexec \"$ATB_FIXTURE_BASH\" --noprofile --norc\n"),
   )
   await chmod(ssh, 0o755)
   fixture.env.PATH = `${bin}:${fixture.env.PATH ?? ""}`
   fixture.env.ATB_FIXTURE_ARGS = join(fixture.directory, "ssh-arguments")
+  fixture.env.ATB_FIXTURE_LOGIN = join(
+    root,
+    "tests/fixtures/bastion-login.bash",
+  )
   return fixture
+}
+
+for (const existingServer of [false, true]) {
+  integration(
+    `manual bastion selection and MFA survive Enter with ${existingServer ? "an existing" : "a new"} managed server`,
+    async () => {
+      const fixture = await fakeSsh(true)
+      const clientLocale = {
+        LANG: "C",
+        LC_ALL: "C",
+        LC_CTYPE: "C",
+        LC_TERMINAL: "fixture-terminal",
+        LC_TERMINAL_VERSION: "1.2",
+      }
+      Object.assign(fixture.env, clientLocale, {
+        ATB_FIXTURE_KEEP: "preserved; 中文",
+        SSH_AUTH_SOCK: join(fixture.directory, "fixture-agent.sock"),
+        LC_TIME: "C",
+      })
+      if (existingServer) {
+        expect(
+          (await fixture.cli(["start", "--session", "keeper", "--json"])).code,
+        ).toBe(0)
+        const keeper = await fixture.binding("keeper")
+        // Model a private server left running by an older Bridge binary.
+        await new Tmux(keeper.socketPath).run([
+          "set-option",
+          "-g",
+          "default-terminal",
+          "tmux-256color",
+        ])
+        // The new client is clean, but the old server still holds the values.
+        for (const variable of Object.keys(clientLocale))
+          fixture.env[variable] = undefined
+      }
+      const owner = terminal(fixture, [
+        "connect",
+        "bastion-example",
+        "--session",
+        "remote",
+      ])
+      try {
+        await until(async () => {
+          const entries = (await fixture.cli(["list", "--json"])).result
+            .sessions
+          if (!Array.isArray(entries)) return false
+          const binding = entries.find((entry) => entry.session === "remote")
+          if (!binding) return false
+          fixture.sockets.add((await fixture.binding()).socketPath)
+          return owner.output().includes("Select server> ")
+        })
+        expect(owner.output()).toContain("Terminal: screen-256color")
+        expect(owner.output()).toContain("Locale variables present: []")
+        expect(owner.output()).toContain(
+          `Preserved environment: preserved; 中文|${fixture.env.SSH_AUTH_SOCK}|C`,
+        )
+        const binding = await fixture.binding()
+        for (const [variable, value] of Object.entries(clientLocale))
+          expect(
+            (
+              await new Tmux(binding.socketPath).run([
+                "show-environment",
+                "-g",
+                variable,
+              ])
+            ).trim(),
+          ).toBe(`${variable}=${value}`)
+        expect(owner.output()).not.toContain("unknown terminal type")
+        expect(owner.output()).not.toContain("Verification code> ")
+        owner.process.terminal?.write("1\r")
+        await until(async () => owner.output().includes("Verification code> "))
+        // A second Enter or an automatic helper would consume/fail this read.
+        await Bun.sleep(150)
+        expect(owner.output()).not.toContain("Authentication failed")
+        expect(owner.output()).not.toContain("Authenticated target> ")
+        expect(owner.output()).not.toContain("Connection ended")
+        for (const byte of "123456") {
+          owner.process.terminal?.write(byte)
+          await Bun.sleep(5)
+        }
+        owner.process.terminal?.write("\r")
+        await until(async () =>
+          owner.output().includes("Authenticated target> "),
+        )
+        expect(owner.output()).not.toContain("123456")
+        expect(owner.output()).not.toContain("Connection ended")
+        expect((await fixture.binding()).control).toBe("human")
+        expect((await fixture.binding()).shell.state).toBe("uninitialized")
+      } finally {
+        await close(owner)
+      }
+    },
+    15000,
+  )
 }
 integration(
   "connect offers explicit selection when several sessions exist",
@@ -420,6 +521,19 @@ integration(
         "sleep 2; printf old-effect",
       ])
       expect(timedOut.result.execution_state).toBe("unknown")
+      for (const variable of [
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_TERMINAL",
+        "LC_TERMINAL_VERSION",
+      ])
+        await new Tmux(old.socketPath).run([
+          "set-environment",
+          "-g",
+          variable,
+          "C",
+        ])
       process.kill(old.panePid, "SIGKILL")
       await until(async () =>
         owner.output().includes("[r] Reconnect in this window"),
@@ -468,6 +582,13 @@ integration(
       owner.process.terminal?.write("printf 'reconnected-manual-input\\n'\r")
       await fixture.untilCapture(
         (output) => output.split("\n").includes("reconnected-manual-input"),
+        nextAlias,
+      )
+      owner.process.terminal?.write(
+        `printf 'reconnected-locale:[%s%s%s%s%s]\\n' "\${LANG+x}" "\${LC_ALL+x}" "\${LC_CTYPE+x}" "\${LC_TERMINAL+x}" "\${LC_TERMINAL_VERSION+x}"\r`,
+      )
+      await fixture.untilCapture(
+        (output) => output.split("\n").includes("reconnected-locale:[]"),
         nextAlias,
       )
       expect(

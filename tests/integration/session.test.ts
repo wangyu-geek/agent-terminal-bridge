@@ -232,7 +232,7 @@ integration(
 )
 
 integration(
-  "SSH startup uses literal alias arguments and leaves authentication manual",
+  "SSH startup clears client locale, preserves other environment and uses literal alias arguments",
   async () => {
     const f = await fixture()
     const bin = `${f.directory}/bin`
@@ -240,22 +240,36 @@ integration(
     const ssh = `${bin}/ssh`
     await Bun.write(
       ssh,
-      '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ATB_FIXTURE_ARGS"\nexec /bin/sh\n',
+      `#!/bin/sh\numask 077\nprintf '%s\\n' "$@" > "$ATB_FIXTURE_ARGS"\nprintf '%s|%s|%s|%s|%s\\n%s\\n%s\\n%s\\n' "\${LANG+x}" "\${LC_ALL+x}" "\${LC_CTYPE+x}" "\${LC_TERMINAL+x}" "\${LC_TERMINAL_VERSION+x}" "$SSH_AUTH_SOCK" "$ATB_FIXTURE_KEEP" "$LC_TIME" > "$ATB_FIXTURE_ENV"\nexec /bin/sh\n`,
     )
     await chmod(ssh, 0o755)
     f.env.ATB_FIXTURE_ARGS = `${f.directory}/ssh-arguments`
+    f.env.ATB_FIXTURE_ENV = `${f.directory}/ssh-environment`
     f.env.PATH = `${bin}:${f.env.PATH ?? ""}`
+    Object.assign(f.env, {
+      LANG: "C",
+      LC_ALL: "C",
+      LC_CTYPE: "C",
+      LC_TERMINAL: "fixture-terminal",
+      LC_TERMINAL_VERSION: "1.2",
+      SSH_AUTH_SOCK: `${f.directory}/fixture-agent.sock`,
+      ATB_FIXTURE_KEEP: "literal; value $(unused) 中文",
+      LC_TIME: "C",
+    })
     expect(
       (await f.cli(["start", "--ssh", "bastion-example", "--json"])).code,
     ).toBe(0)
     const deadline = performance.now() + 3000
     while (
-      !(await Bun.file(`${f.directory}/ssh-arguments`).exists()) &&
+      !(await Bun.file(`${f.directory}/ssh-environment`).exists()) &&
       performance.now() < deadline
     )
       await Bun.sleep(10)
     expect(await Bun.file(`${f.directory}/ssh-arguments`).text()).toBe(
       "-tt\nbastion-example\n",
+    )
+    expect(await Bun.file(`${f.directory}/ssh-environment`).text()).toBe(
+      `||||\n${f.env.SSH_AUTH_SOCK}\n${f.env.ATB_FIXTURE_KEEP}\nC\n`,
     )
     expect(
       (

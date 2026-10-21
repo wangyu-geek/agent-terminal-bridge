@@ -1,8 +1,22 @@
 # Remediation Implementation and Acceptance Record
 
-> Updated 2026-10-20. See the [remediation plan](remediation-plan.md). The four adjustments in round two have implementation, local regression, and ordinary SSH evidence from the final binary; overall user acceptance is still incomplete. The automation records below do not replace validation with a real bastion, first-time users, or native terminal gestures. Code/test evidence links apply to a source checkout; release packages do not include source or tests.
+> Updated 2026-10-21. See the [remediation plan](remediation-plan.md). The four adjustments in round two have implementation, local regression, and ordinary SSH evidence from the final binary; overall user acceptance is still incomplete. The automation records below do not replace validation with a real bastion, first-time users, or native terminal gestures. Code/test evidence links apply to a source checkout; release packages do not include source or tests.
 
 Skill scope update (2026-10-19): supports only the current CLI `session_id` workflow; legacy compatibility references and fallback guidance were removed. Stop and prompt for a CLI update when a required capability is missing. Skill structure, documentation/examples, and package-content checks passed. The current tarball contains 20 files and one session-workflow reference. This update changed no runtime code and did not rerun the terminal matrix or real SSH. The execution and file-count details below are snapshots from their respective validation runs.
+
+## CI archived-history timeout fixture correction (2026-10-21)
+
+The [reported Ubuntu system-Bash job](https://github.com/wangyu-geek/agent-terminal-bridge/actions/runs/39421652434/job/118623817388) failed the ended-name/history case: it expected `unknown` but received `not_started`. The test's 100ms execution deadline includes identity checks, durable state writes and control-client setup, so it can expire before dispatch. The other three jobs in that run passed. The Linux skips are expected: the real Codex sandbox case requires macOS and the Codex executable, while the extra Homebrew PTY case requires `/opt/homebrew/bin/bash`. The system-Bash PTY case still runs on Linux.
+
+The [connection test](../tests/integration/connections.test.ts) now uses the existing bounded shell gate and a two-second execution deadline. It requires the target's start marker and `TIMEOUT/unknown` result before ending the owned connection. The gate stays blocked until connection termination and is released in `finally`; a fixed sleep no longer determines whether a command is still running. The same-name/new-ID and read-only old-history assertions remain. The fake SSH shell also honors the validated `ATB_TEST_BASH` selection, so this file actually exercises each selected interpreter. No production timeout, dispatch or recovery behavior changed.
+
+A controlled comparison in temporary source copies inserted a 200ms delay after the prepared record and before control-client setup, only for this test's request ID. With both system Bash 3.2 and Homebrew Bash 5.3, the old test failed with the exact `unknown` versus `not_started` assertion and the corrected test passed. No timing hook was added to production. Logs: `artifacts/validation-connections-deadline-{old,new}-{3.2,5.3}.log`.
+
+Local validation on macOS arm64, Bun 1.4.2 and tmux 3.8:
+
+- The affected connection file passed **5/5** with system Bash 3.2 and **5/5** with Homebrew Bash 5.3.
+- Static/type/documentation checks passed. In an isolated copy of commit 0dd970a plus this test correction, excluding unrelated working-tree changes, both Bash selections passed **31 unit + 71 integration tests, 0 failed, 0 skipped**. Logs: `artifacts/validation-connections-full-{3.2,5.3}.log`.
+- Native Linux, Bash 4.4 and a new GitHub CI run have not been executed for this test-only correction. Builds, artifact smoke checks and real remote operations were not run because runtime/build files did not change.
 
 ## CI menu snapshot and handoff input correction (2026-10-20)
 

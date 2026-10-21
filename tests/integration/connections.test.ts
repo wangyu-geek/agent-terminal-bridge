@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { chmod, mkdir, rename, symlink, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { writeAtomic } from "../../src/security.ts"
-import { Fixture, root } from "../helpers.ts"
+import { compatibleBash, Fixture, root } from "../helpers.ts"
 
 const integration = Bun.which("tmux") ? test : test.skip
 const fixtures: Fixture[] = []
@@ -12,12 +12,15 @@ afterEach(async () => {
 async function fixture() {
   const f = await Fixture.create()
   fixtures.push(f)
+  const bash = await compatibleBash()
+  if (!bash) throw new Error("Bash >=3.2 is required for this fixture")
+  f.env.ATB_FIXTURE_BASH = bash
   const bin = join(f.directory, "bin")
   await mkdir(bin, { mode: 0o700 })
   const ssh = join(bin, "ssh")
   await Bun.write(
     ssh,
-    "#!/bin/sh\nPS1='fixture-ready> '; export PS1\nexec /bin/bash --noprofile --norc\n",
+    "#!/bin/sh\nPS1='fixture-ready> '; export PS1\nexec \"$ATB_FIXTURE_BASH\" --noprofile --norc\n",
   )
   await chmod(ssh, 0o755)
   f.env.PATH = `${bin}:${f.env.PATH}`
@@ -141,19 +144,33 @@ integration(
         ])
       ).code,
     ).toBe(0)
-    const result = await f.cli([
-      "exec",
-      "--session-id",
-      first.id,
-      "--request-id",
-      "old-unknown",
-      "--timeout",
-      "0.1",
-      "--json",
-      "sleep 2",
-    ])
-    expect(result.result.execution_state).toBe("unknown")
-    await ended(f, first.alias)
+    const gate = f.commandGate(":")
+    try {
+      const result = await f.cli([
+        "exec",
+        "--session-id",
+        first.id,
+        "--request-id",
+        "old-unknown",
+        "--timeout",
+        "2",
+        "--json",
+        gate.command,
+      ])
+      // Observe real execution; a short deadline can expire before dispatch.
+      expect(await gate.started()).toBe(true)
+      expect(result.code).toBe(7)
+      expect(result.result).toMatchObject({
+        execution_state: "unknown",
+        completed: false,
+        exit_code: null,
+        recovery_required: true,
+        error: { code: "TIMEOUT" },
+      })
+      await ended(f, first.alias)
+    } finally {
+      await gate.release()
+    }
     const [next] = await open(f, "entry-one", first.alias)
     expect(next?.alias).toBe(first.alias)
     expect(next?.id).not.toBe(first.id)

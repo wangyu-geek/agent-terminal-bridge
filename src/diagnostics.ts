@@ -1,6 +1,7 @@
 import { lstat, open, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { accessDenied, BridgeError, hasCode, requireValue } from "./errors.ts"
+import { type Message, msg } from "./i18n.ts"
 import { processIdentity } from "./identity.ts"
 import type { Config } from "./models.ts"
 import { privatePathError } from "./security.ts"
@@ -9,7 +10,7 @@ import { checkTmux, paneTarget, randomNonce, Tmux } from "./tmux.ts"
 
 interface Check {
   state: "allowed" | "denied" | "missing" | "changed" | "error" | "not_checked"
-  message?: string
+  message?: string | Message
 }
 
 async function check(action: () => Promise<unknown>): Promise<Check> {
@@ -34,8 +35,8 @@ async function check(action: () => Promise<unknown>): Promise<Check> {
               : "error",
       message:
         error instanceof BridgeError
-          ? error.message
-          : privatePathError(error).message,
+          ? error.userMessage
+          : privatePathError(error).userMessage,
     }
   }
 }
@@ -62,7 +63,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
         info.uid === process.getuid?.() &&
         (info.mode & 0o077) === 0,
       "UNSAFE_PATH",
-      "State root is not a private owned directory",
+      msg("error.state_root_is_not_a_private_owned_directory"),
       8,
     )
     const path = join(state.root, `.doctor-${randomNonce()}`)
@@ -102,7 +103,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
           pane.serverInstance === selected.serverInstance &&
           pane.pid === selected.panePid,
         "BINDING_CHANGED",
-        "The saved terminal identity changed",
+        msg("error.the_saved_terminal_identity_changed"),
         4,
       )
     })
@@ -110,7 +111,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
       requireValue(
         (await processIdentity(selected.serverPid)) === selected.serverProcess,
         "BINDING_CHANGED",
-        "The saved tmux process identity changed",
+        msg("error.the_saved_tmux_process_identity_changed"),
         4,
       )
     })
@@ -133,8 +134,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
           ok: false,
           error: {
             code: "LOCAL_ACCESS_DENIED",
-            message:
-              "Local access checks were denied; review local_access before operating this session",
+            message: msg("doctor.denied"),
             retryable: false,
           },
         }
@@ -143,7 +143,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
             ok: false,
             error: {
               code: "DEPENDENCY_MISSING",
-              message: "A required local tmux backend is unavailable",
+              message: msg("doctor.backend"),
               retryable: false,
             },
           }
@@ -152,7 +152,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
               ok: false,
               error: {
                 code: "INVALID_BINDING",
-                message: "The selected session is not registered",
+                message: msg("doctor.selection"),
                 retryable: false,
               },
             }
@@ -161,7 +161,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
                 ok: false,
                 error: {
                   code: "LOCAL_DIAGNOSTIC_FAILED",
-                  message: "A local access check could not be established",
+                  message: msg("doctor.failed"),
                   retryable: false,
                 },
               }
@@ -192,8 +192,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
         }
       : {
           state: "not_checked",
-          message:
-            "No remote probe was sent; select a registered session for local socket and process checks",
+          message: msg("doctor.no_probe"),
         },
     local_access: {
       ready_for_session:
@@ -222,9 +221,7 @@ export async function diagnose(config: Config, id?: string, name?: string) {
         session_id: binding?.id ?? null,
         socket_access_is_session_isolation: false,
       },
-      next_action: denied
-        ? "Grant this Bridge invocation the reported local resources, then rerun doctor. A session_id does not grant OS access; a local permission denial does not establish disconnection."
-        : "Review missing/changed checks before using the selected session.",
+      next_action: denied ? msg("doctor.grant") : msg("doctor.review"),
     },
   }
 }

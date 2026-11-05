@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { lstat, mkdir, rmdir, unlink } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import {
   bootIdentity,
   processDefinitelyAbsent,
@@ -43,7 +44,7 @@ export class DirectoryLock {
     if (!maintenance && (await exists(guard)))
       throw new BridgeError(
         "BUSY",
-        "Resource lock maintenance is in progress",
+        msg("error.resource_lock_maintenance_is_in_progress"),
         6,
         true,
       )
@@ -53,7 +54,7 @@ export class DirectoryLock {
       if (hasCode(error, "EEXIST"))
         throw new BridgeError(
           "BUSY",
-          "Resource is locked; stale locks require explicit recovery",
+          msg("error.resource_is_locked_stale_locks_require_explicit_recovery"),
           6,
           true,
         )
@@ -73,7 +74,7 @@ export class DirectoryLock {
       await lock.release()
       throw new BridgeError(
         "BUSY",
-        "Resource lock maintenance is in progress",
+        msg("error.resource_lock_maintenance_is_in_progress"),
         6,
         true,
       )
@@ -88,7 +89,7 @@ export class DirectoryLock {
     requireValue(
       stat.ino === this.inode && owner.token === this.token,
       "LOCK_OWNER_UNKNOWN",
-      "Lock ownership changed; refusing cleanup",
+      msg("error.lock_ownership_changed_refusing_cleanup"),
       9,
     )
     await unlink(join(this.path, "owner.json"))
@@ -114,7 +115,7 @@ export async function recoverDirectoryLock(
           stat.uid === process.getuid?.() &&
           (stat.mode & 0o077) === 0,
         "LOCK_OWNER_UNKNOWN",
-        "Lock directory is unsafe",
+        msg("error.lock_directory_is_unsafe"),
         9,
       )
       inode = stat.ino
@@ -123,27 +124,29 @@ export async function recoverDirectoryLock(
       if (hasCode(error, "ENOENT") && !(await exists(path))) return
       throw new BridgeError(
         "LOCK_OWNER_UNKNOWN",
-        "Lock owner cannot be verified; stop all Bridge writers before manual maintenance",
+        msg(
+          "error.lock_owner_cannot_be_verified_stop_all_bridge_writers_before_manual_maintenance",
+        ),
         9,
       )
     }
     requireValue(
       owner.boot === (await bootIdentity()),
       "LOCK_OWNER_UNKNOWN",
-      "Lock belongs to another boot; manual maintenance is required",
+      msg("error.lock_belongs_to_another_boot_manual_maintenance_is_required"),
       9,
     )
     requireValue(
       processDefinitelyAbsent(owner.pid),
       "LOCK_OWNER_UNKNOWN",
-      "Lock PID is alive or unverifiable; refusing takeover",
+      msg("error.lock_pid_is_alive_or_unverifiable_refusing_takeover"),
       9,
     )
     const current = readOwner(await readJsonSecure(join(path, "owner.json")))
     requireValue(
       (await lstat(path)).ino === inode && current.token === owner.token,
       "LOCK_OWNER_UNKNOWN",
-      "Lock changed during recovery",
+      msg("error.lock_changed_during_recovery"),
       9,
     )
     await unlink(join(path, "owner.json"))

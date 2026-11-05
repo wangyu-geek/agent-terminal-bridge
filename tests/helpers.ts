@@ -27,11 +27,26 @@ export class Fixture {
     await mkdir(configDir, { recursive: true, mode: 0o700 })
     await writeFile(
       join(configDir, "config.json"),
-      JSON.stringify({ schema_version: 1, security: { allow_raw_send: raw } }),
+      JSON.stringify({
+        schema_version: 1,
+        defaults: { language: "en" },
+        security: { allow_raw_send: raw },
+      }),
       { mode: 0o600 },
     )
+    // Never overwrite the developer's real desktop clipboard in CLI tests.
+    const clipboardBin = join(directory, "clipboard-bin")
+    await mkdir(clipboardBin, { mode: 0o700 })
+    for (const tool of ["pbcopy", "wl-copy", "xclip", "xsel"])
+      await writeFile(
+        join(clipboardBin, tool),
+        '#!/bin/sh\numask 077\nprintf \'%s\\n\' "$0" "$@" > "$ATB_FIXTURE_CLIPBOARD.args"\n/bin/cat > "$ATB_FIXTURE_CLIPBOARD"\n',
+        { mode: 0o700 },
+      )
     return new Fixture(directory, {
       ...process.env,
+      PATH: `${clipboardBin}:${process.env.PATH ?? ""}`,
+      ATB_FIXTURE_CLIPBOARD: join(directory, "clipboard"),
       HOME: directory,
       XDG_CONFIG_HOME: configHome,
       XDG_STATE_HOME: join(directory, "state"),

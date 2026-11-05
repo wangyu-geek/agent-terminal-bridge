@@ -1,6 +1,7 @@
 import { ControlClient } from "./control.ts"
 import { BridgeError, requireValue } from "./errors.ts"
 import { Executor } from "./executor.ts"
+import { msg } from "./i18n.ts"
 import { processIdentity } from "./identity.ts"
 import {
   inspectDirectoryLock,
@@ -53,7 +54,9 @@ export class Workflow {
     requireValue(
       !pane.alternate,
       "SHELL_CONFIRMATION_REQUIRED",
-      "Leave the alternate-screen application before handing over the shell",
+      msg(
+        "error.leave_the_alternate_screen_application_before_handing_over_the_shell",
+      ),
       5,
     )
     await this.executor.tasks.requireIdle(binding)
@@ -62,7 +65,9 @@ export class Workflow {
       requireValue(
         expectedHost === undefined || expectedHost === binding.shell.endpoint,
         "ENDPOINT_MISMATCH",
-        "The previous shell report does not match the requested host",
+        msg(
+          "error.the_previous_shell_report_does_not_match_the_requested_host",
+        ),
         5,
       )
       return this.readyResult(binding, true)
@@ -72,7 +77,9 @@ export class Workflow {
         (!binding.preparation?.inputStarted ||
           binding.preparation.phase === "completed"),
       "RECOVERY_REQUIRED",
-      "Take over, inspect the terminal and use resume before preparing again",
+      msg(
+        "error.take_over_inspect_the_terminal_and_use_resume_before_preparing_again",
+      ),
       9,
     )
     const tmux = new Tmux(binding.socketPath)
@@ -91,7 +98,7 @@ export class Workflow {
     requireValue(
       panes.length === 1 && panes[0] === binding.paneId,
       "UNSUPPORTED_CAPABILITY",
-      "Preparation requires a dedicated single-pane session",
+      msg("error.preparation_requires_a_dedicated_single_pane_session"),
       3,
     )
     const deadline = performance.now() + timeout * 1000
@@ -129,7 +136,7 @@ export class Workflow {
         requireValue(
           !changed && performance.now() < deadline,
           changed ? "BINDING_CHANGED" : "TIMEOUT",
-          "Preparation stopped; take over and inspect the terminal",
+          msg("error.preparation_stopped_take_over_and_inspect_the_terminal"),
           changed ? 4 : 7,
         )
         await this.sessions.verify(binding, true)
@@ -139,7 +146,9 @@ export class Workflow {
         requireValue(
           Buffer.byteLength(line) <= this.sessions.config.maxInputLineBytes,
           "COMMAND_TOO_LARGE",
-          "Initialization transfer line exceeds the configured limit",
+          msg(
+            "error.initialization_transfer_line_exceeds_the_configured_limit",
+          ),
         )
         await check()
         parser = new FrameParser(nonce, request, "install", 64)
@@ -151,13 +160,18 @@ export class Workflow {
         requireValue(
           !parser.rejected,
           "SHELL_CONFIRMATION_REQUIRED",
-          `The target rejected initialization (${parser.rejected}); take over, inspect and resume`,
+          msg(
+            "error.the_target_rejected_initialization_take_over_inspect_and_resume",
+            { rejected: String(parser.rejected) },
+          ),
           9,
         )
         requireValue(
           parser.completedAt !== null && parser.completedAt <= deadline,
           "TIMEOUT",
-          "Initialization acknowledgement arrived after its deadline",
+          msg(
+            "error.initialization_acknowledgement_arrived_after_its_deadline",
+          ),
           7,
         )
       }
@@ -167,7 +181,9 @@ export class Workflow {
       requireValue(
         Buffer.byteLength(bootstrap) <= this.sessions.config.maxInputLineBytes,
         "COMMAND_TOO_LARGE",
-        "Initialization bootstrap exceeds the configured input limit",
+        msg(
+          "error.initialization_bootstrap_exceeds_the_configured_input_limit",
+        ),
       )
       binding.preparation.phase = "transferring"
       binding.preparation.inputStarted = true
@@ -198,7 +214,7 @@ export class Workflow {
       requireValue(
         remaining > 0,
         "TIMEOUT",
-        "Preparation deadline expired before handshake",
+        msg("error.preparation_deadline_expired_before_handshake"),
         7,
       )
       const probe = await this.executor.probeLocked(
@@ -228,7 +244,9 @@ export class Workflow {
           ? error
           : new BridgeError(
               "LOCAL_IO_ERROR",
-              "Preparation failed; inspect the session before resuming",
+              msg(
+                "error.preparation_failed_inspect_the_session_before_resuming",
+              ),
             )
       binding.preparation.phase = "failed"
       binding.preparation.reason = failure.code
@@ -246,7 +264,7 @@ export class Workflow {
       await this.sessions.state.save(binding)
       throw new BridgeError(
         failure.code,
-        failure.message,
+        failure.userMessage,
         failure.exitCode,
         false,
         binding.preparation.inputStarted ? "unknown" : "not_started",
@@ -286,7 +304,9 @@ export class Workflow {
       requireValue(
         state !== "unknown",
         "LOCK_OWNER_UNKNOWN",
-        "Lock ownership is incomplete or unverifiable; stop Bridge writers for maintenance",
+        msg(
+          "error.lock_ownership_is_incomplete_or_unverifiable_stop_bridge_writers_for_maintenance",
+        ),
         9,
       )
       if (state === "dead")
@@ -328,7 +348,7 @@ export class Workflow {
       requireValue(
         performance.now() < deadline,
         "TIMEOUT",
-        "Takeover is not yet complete; inspect status before typing",
+        msg("error.takeover_is_not_yet_complete_inspect_status_before_typing"),
         7,
       )
       await Bun.sleep(20)
@@ -385,7 +405,7 @@ export class Workflow {
         requireValue(
           binding.control === "human",
           "RECOVERY_REQUIRED",
-          "Take over and inspect the terminal before resuming",
+          msg("error.take_over_and_inspect_the_terminal_before_resuming"),
           9,
         )
         const active = await this.executor.tasks.active(binding)
@@ -439,8 +459,7 @@ export class Workflow {
       recovery_required: needsRecovery,
       error: {
         code: "BINDING_CHANGED",
-        message:
-          "The old connection is no longer usable; no terminal was taken over or prepared",
+        message: msg("result.ended"),
         retryable: false,
       },
       next_action: {
@@ -448,8 +467,8 @@ export class Workflow {
         session_id: binding.id,
         requires_confirmation: true,
         message: needsRecovery
-          ? "The old result remains unknown. Use r in the connect view to explicitly create a new connection; inspect the old outcome before repeating any work."
-          : "Use r in the connect view to explicitly create a new connection with a new session_id; the old result remains unchanged.",
+          ? msg("action.reconnect_unknown")
+          : msg("action.reconnect_new"),
       },
     }
   }

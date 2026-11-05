@@ -2,11 +2,21 @@
 import { createInterface } from "node:readline/promises"
 import { parseArgs } from "node:util"
 import pkg from "../package.json"
+import { copySessionId } from "./clipboard.ts"
 import { loadConfig } from "./config.ts"
 import { Connections } from "./connections.ts"
 import { diagnose } from "./diagnostics.ts"
 import { accessDenied, BridgeError, requireValue } from "./errors.ts"
 import { Executor, resultExitCode } from "./executor.ts"
+import {
+  createI18n,
+  detectLanguage,
+  type I18n,
+  LANGUAGE_SETTINGS,
+  type Message,
+  msg,
+  resolveLanguage,
+} from "./i18n.ts"
 import { inspectDirectoryLock, recoverDirectoryLock } from "./locking.ts"
 import { OPERATIONS } from "./models.ts"
 import { sanitizeText } from "./output.ts"
@@ -20,6 +30,7 @@ import { alias, choice, integer } from "./validate.ts"
 import { Workflow } from "./workflow.ts"
 
 const OPTIONS = {
+  lang: { type: "string" },
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
@@ -48,7 +59,7 @@ const OPTIONS = {
   "expected-host": { type: "string" },
   takeover: { type: "boolean" },
 } as const
-const COMMON = ["json", "help", "config", "session", "session-id"]
+const COMMON = ["lang", "json", "help", "config", "session", "session-id"]
 const COMMAND_OPTIONS: Record<string, string[]> = {
   doctor: [],
   capabilities: [],
@@ -107,8 +118,32 @@ export function capabilities() {
 export async function main(args: string[]): Promise<number> {
   const json = args.includes("--json")
   let currentRequestId: string | null = null
+  let i18n = createI18n(detectLanguage())
+  const emit = (result: object, json: boolean) => emitResult(result, json, i18n)
+  const ask = (prompt: string | Message) => question(i18n.text(prompt))
+  const approve = (
+    acknowledged: boolean | undefined,
+    prompt: string | Message,
+  ) => confirm(acknowledged, i18n.text(prompt))
   try {
-    requireBun()
+    try {
+      // This pass only selects the language of argument errors. The strict
+      // parse below remains authoritative and honors the argument terminator.
+      const { values } = parseArgs({
+        args,
+        options: OPTIONS,
+        allowPositionals: true,
+        strict: false,
+      })
+      if (
+        values.lang === "en" ||
+        values.lang === "zh-CN" ||
+        values.lang === "auto"
+      )
+        i18n = createI18n(resolveLanguage(values.lang))
+    } catch {
+      // Incomplete options still get an error in the environment language.
+    }
     const parsed = parseArgs({
       args,
       options: OPTIONS,
@@ -116,19 +151,32 @@ export async function main(args: string[]): Promise<number> {
       strict: true,
     })
     const { values, positionals } = parsed
+    const language =
+      values.lang === undefined
+        ? undefined
+        : choice(values.lang, LANGUAGE_SETTINGS, "language")
+    i18n = createI18n(resolveLanguage(language))
+    requireBun()
     if (values.version) {
       emit({ version: pkg.version }, json)
       return 0
     }
     const command = positionals[0] ?? "help"
     if (values.help || command === "help") {
+      try {
+        const config = await loadConfig(values.config)
+        i18n = createI18n(resolveLanguage(language ?? config.language))
+      } catch (error) {
+        if (!(error instanceof BridgeError)) throw error
+        // Help stays available when configuration is broken or inaccessible.
+      }
       const help = {
         command: "remote-terminal",
         version: pkg.version,
         commands: Object.keys(COMMAND_OPTIONS),
         advanced: values.advanced ?? false,
         usage:
-          "remote-terminal <command> [--session-id ID | --session NAME] [--json]",
+          "remote-terminal <command> [--session-id ID | --session NAME] [--lang auto|en|zh-CN] [--json]",
         notes: [
           "start/bind register a pane; authentication remains manual",
           "raw send is disabled by default; send is not exec",
@@ -139,31 +187,32 @@ export async function main(args: string[]): Promise<number> {
       emit(help, json)
       return 0
     }
+    const config = await loadConfig(values.config)
+    i18n = createI18n(resolveLanguage(language ?? config.language))
     const allowed = COMMAND_OPTIONS[command]
-    requireValue(allowed, "INVALID_INPUT", "Unknown command")
+    requireValue(allowed, "INVALID_INPUT", msg("error.unknown_command"))
     requireValue(
       positionals.length === 1 ||
         (["exec", "connect"].includes(command) && positionals.length === 2),
       "INVALID_INPUT",
-      "Unexpected positional arguments",
+      msg("error.unexpected_positional_arguments"),
     )
     for (const key of Object.keys(values))
       requireValue(
         COMMON.includes(key) || allowed.includes(key),
         "INVALID_INPUT",
-        `Option --${key} is not accepted for this command`,
+        msg("error.option_is_not_accepted_for_this_command", { key }),
       )
     requireValue(
       process.platform === "darwin" || process.platform === "linux",
       "UNSUPPORTED_PLATFORM",
-      "Only macOS and Linux are supported",
+      msg("error.only_macos_and_linux_are_supported"),
       3,
     )
-    const config = await loadConfig(values.config)
     requireValue(
       !(values["session-id"] !== undefined && values.session !== undefined),
       "INVALID_INPUT",
-      "Use either --session-id or --session, not both",
+      msg("error.use_either_session_id_or_session_not_both"),
     )
     if (command === "capabilities") {
       emit(capabilities(), json)
@@ -196,44 +245,50 @@ export async function main(args: string[]): Promise<number> {
       let current = name
       while (true) {
         const selected = await state.load(current)
-        console.log(humanResult(await sessions.status(current)))
+        console.log(humanResult(await sessions.status(current), i18n))
+        console.log(
+          (await copySessionId(selected.id))
+            ? i18n.t("clipboard.copied", { id: selected.id })
+            : i18n.t("clipboard.unavailable", { id: selected.id }),
+        )
         if (
-          (await new SharedTerminal(sessions, workflow).attach(current)) ===
-          "detach"
+          (await new SharedTerminal(sessions, workflow, i18n).attach(
+            current,
+          )) === "detach"
         )
           return 0
         const created = await connections.reconnect(selected)
         current = created.alias
         await state.select(created.id)
         await sessions.showSessionId(created)
-        console.log(
-          `New connection: session_id=${created.id}. Old session_id=${selected.id} and its results remain unchanged. Complete login manually, then hand over this new session_id.`,
-        )
+        console.log(i18n.t("connect.new", { id: created.id, old: selected.id }))
       }
     }
     if (command === "connect") {
       requireValue(
         !json,
         "INVALID_INPUT",
-        "connect is interactive; use list/status --json for inspection",
+        msg("error.connect_is_interactive_use_list_status_json_for_inspection"),
       )
       requireValue(
         process.stdin.isTTY && process.stdout.isTTY,
         "TTY_REQUIRED",
-        "connect requires a real terminal; run remote-terminal connect SSH_ALIAS there",
+        msg(
+          "error.connect_requires_a_real_terminal_run_remote_terminal_connect_ssh_alias_there",
+        ),
         5,
       )
       let name: string
       requireValue(
         !values.new || positionals[1] !== undefined,
         "INVALID_INPUT",
-        "--new requires an SSH entry alias",
+        msg("error.new_requires_an_ssh_entry_alias"),
       )
       if (positionals[1] !== undefined) {
         requireValue(
           values["session-id"] === undefined,
           "INVALID_INPUT",
-          "Use connect --session-id to return to that exact session, or connect SSH_ALIAS to select its connections",
+          msg("error.connect_selector_conflict"),
         )
         const abandoned: string[] = []
         for (const scope of ["registry", "audit"]) {
@@ -241,16 +296,15 @@ export async function main(args: string[]): Promise<number> {
           requireValue(
             lock !== "unknown",
             "LOCK_OWNER_UNKNOWN",
-            "Local setup lock ownership cannot be verified; controlled maintenance is required",
+            msg(
+              "error.local_setup_lock_ownership_cannot_be_verified_controlled_maintenance_is_required",
+            ),
             9,
           )
           if (lock === "dead") abandoned.push(scope)
         }
         if (abandoned.length) {
-          await confirm(
-            undefined,
-            "A previous local setup process has ended. Recover its verified abandoned setup locks? Remote tasks will not be changed.",
-          )
+          await approve(undefined, msg("confirm.setup_locks"))
           for (const scope of abandoned)
             await recoverDirectoryLock(state.locks, scope)
         }
@@ -273,7 +327,7 @@ export async function main(args: string[]): Promise<number> {
           )
           index =
             integer(
-              Number(await question("Choose a session number: ")),
+              Number(await ask(msg("connect.choose"))),
               "session number",
               1,
               candidates.length,
@@ -283,7 +337,7 @@ export async function main(args: string[]): Promise<number> {
         requireValue(
           selected,
           "INVALID_BINDING",
-          "No connection was selected",
+          msg("error.no_connection_was_selected"),
           4,
         )
         name = await state.select(selected.id)
@@ -303,7 +357,7 @@ export async function main(args: string[]): Promise<number> {
                 .join("\n"),
             )
             const selected = integer(
-              Number(await question("Choose a session number: ")),
+              Number(await ask(msg("connect.choose"))),
               "session number",
               1,
               bindings.length,
@@ -312,7 +366,7 @@ export async function main(args: string[]): Promise<number> {
             requireValue(
               chosen,
               "INVALID_INPUT",
-              "Choose a listed session number",
+              msg("error.choose_a_listed_session_number"),
             )
             name = await state.select(chosen.id)
           } else name = await state.select()
@@ -335,13 +389,13 @@ export async function main(args: string[]): Promise<number> {
       const ended =
         command === "resume" &&
         (await sessions.status(session)).display_state === "connection_ended"
-      await confirm(
+      await approve(
         values.confirm,
         ended
-          ? "Acknowledge the old unknown outcome without claiming the remote program stopped? This connection cannot be resumed; a new connection must be created explicitly."
+          ? msg("confirm.ended")
           : command === "takeover"
-            ? "Return this selected terminal to human control without automatically interrupting its program?"
-            : "Login and target selection are complete, prior work is resolved, and this selected shell is idle and ready for the Agent?",
+            ? msg("confirm.takeover")
+            : msg("confirm.ready"),
       )
       const timeout = timeoutSeconds(
         values.timeout,
@@ -361,7 +415,7 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         (await state.load(session)).paneId === values.pane,
         "PERMISSION_DENIED",
-        "--pane cannot expand a registered binding",
+        msg("error.pane_cannot_expand_a_registered_binding"),
         5,
       )
     if (command === "shell-init") {
@@ -374,12 +428,9 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         values["expected-host"],
         "INVALID_INPUT",
-        "confirm-shell requires --expected-host",
+        msg("error.confirm_shell_requires_expected_host"),
       )
-      await confirm(
-        values.confirm,
-        "Confirm the expected destination and an empty compatible Bash prompt?",
-      )
+      await approve(values.confirm, msg("confirm.shell"))
       emit(
         await executor.confirmShell(
           session,
@@ -398,7 +449,7 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         Boolean(values["command-stdin"]) !== (positionals[1] !== undefined),
         "INVALID_INPUT",
-        "Provide exactly one command argument or --command-stdin",
+        msg("error.provide_exactly_one_command_argument_or_command_stdin"),
       )
       const commandText = values["command-stdin"]
         ? await readCommand(config.maxCommandBytes)
@@ -425,7 +476,7 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         values["request-id"],
         "INVALID_INPUT",
-        `${command} requires --request-id`,
+        msg("error.requires_request_id", { command }),
       )
       currentRequestId = values["request-id"]
       if (command === "request") {
@@ -433,11 +484,11 @@ export async function main(args: string[]): Promise<number> {
         emit(result, json)
         return resultExitCode(result)
       }
-      await confirm(
+      await approve(
         values.confirm,
         command === "recover"
-          ? "Confirm that you inspected the terminal and resolved the outstanding command?"
-          : "Attempt to interrupt the named foreground request?",
+          ? msg("confirm.recover")
+          : msg("confirm.interrupt"),
       )
       emit(
         command === "recover"
@@ -455,9 +506,9 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         values.socket && values.pane,
         "INVALID_INPUT",
-        "bind requires --socket and --pane",
+        msg("error.bind_requires_socket_and_pane"),
       )
-      await confirm(values.confirm, "Register this exact external tmux pane?")
+      await approve(values.confirm, msg("confirm.bind"))
       const permissions = (values.permissions ?? "read")
         .split(",")
         .map((item) => choice(item, OPERATIONS, "operation"))
@@ -514,7 +565,7 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         values.raw && values.text !== undefined,
         "INVALID_INPUT",
-        "send requires --raw and --text",
+        msg("error.send_requires_raw_and_text"),
       )
       emit(
         await sessions.send(session, values.text, values.enter ?? false),
@@ -524,15 +575,12 @@ export async function main(args: string[]): Promise<number> {
     }
     if (command === "handoff") {
       const to = choice(values.to, ["human", "agent"], "control owner")
-      await confirm(
-        values.confirm,
-        `Hand control to ${to}? Confirm an empty shell input line.`,
-      )
+      await approve(values.confirm, msg("confirm.handoff", { to }))
       if (values.takeover) {
         requireValue(
           to === "human" && values["request-id"],
           "INVALID_INPUT",
-          "takeover requires --to human and --request-id",
+          msg("error.takeover_requires_to_human_and_request_id"),
         )
         emit(await executor.takeover(session, values["request-id"]), json)
       } else emit(await sessions.handoff(session, to), json)
@@ -543,10 +591,7 @@ export async function main(args: string[]): Promise<number> {
       command === "unbind" ||
       command === "recover-lock"
     ) {
-      await confirm(
-        values.confirm,
-        `Confirm ${command} for this registered session?`,
-      )
+      await approve(values.confirm, msg("confirm.manage", { command }))
       const result =
         command === "stop"
           ? await sessions.stop(session)
@@ -567,17 +612,17 @@ export async function main(args: string[]): Promise<number> {
       requireValue(
         !json,
         "INVALID_INPUT",
-        "attach is interactive and does not support --json",
+        msg("error.attach_is_interactive_and_does_not_support_json"),
       )
       requireValue(
         process.stdin.isTTY && process.stdout.isTTY,
         "TTY_REQUIRED",
-        "attach requires a real terminal",
+        msg("error.attach_requires_a_real_terminal"),
         5,
       )
       return await sessions.attach(session, values.writable ?? false)
     }
-    throw new BridgeError("INVALID_INPUT", "Unknown command", 2)
+    throw new BridgeError("INVALID_INPUT", msg("error.unknown_command"), 2)
   } catch (error) {
     const argumentError =
       error instanceof Error &&
@@ -590,14 +635,16 @@ export async function main(args: string[]): Promise<number> {
         : accessDenied(error)
           ? new BridgeError(
               "LOCAL_ACCESS_DENIED",
-              "Local access was denied; run doctor for the selected session",
+              msg(
+                "error.local_access_was_denied_run_doctor_for_the_selected_session",
+              ),
               5,
             )
           : new BridgeError(
               argumentError ? "INVALID_INPUT" : "LOCAL_IO_ERROR",
               argumentError
-                ? "Invalid command line arguments"
-                : "Local operation failed",
+                ? msg("error.arguments")
+                : msg("error.local_operation"),
               argumentError ? 2 : 8,
             )
     const result = {
@@ -623,7 +670,7 @@ export async function main(args: string[]): Promise<number> {
     else
       console.error(
         sanitizeText(
-          `${failure.code}: ${failure.message}\nNext: ${errorNextStep(failure.code)}`,
+          `${failure.code}: ${i18n.text(failure.userMessage)}\n${i18n.t("session.next", { next: i18n.text(errorNextStep(failure.code)) })}`,
         ),
       )
     return failure.exitCode
@@ -639,7 +686,9 @@ function timeoutSeconds(
   requireValue(
     Number.isFinite(number) && number > 0 && number <= maximum,
     "INVALID_INPUT",
-    "timeout must be a finite positive number within the configured maximum",
+    msg(
+      "error.timeout_must_be_a_finite_positive_number_within_the_configured_maximum",
+    ),
   )
   return number
 }
@@ -648,7 +697,7 @@ async function readCommand(limit: number): Promise<string> {
   requireValue(
     !process.stdin.isTTY,
     "INVALID_INPUT",
-    "--command-stdin requires piped input",
+    msg("error.command_stdin_requires_piped_input"),
   )
   const chunks: Uint8Array[] = []
   let bytes = 0
@@ -657,7 +706,7 @@ async function readCommand(limit: number): Promise<string> {
     requireValue(
       bytes <= limit,
       "COMMAND_TOO_LARGE",
-      "Command input exceeds its limit",
+      msg("error.command_input_exceeds_its_limit"),
     )
     chunks.push(chunk)
   }
@@ -666,15 +715,19 @@ async function readCommand(limit: number): Promise<string> {
       Buffer.concat(chunks),
     )
   } catch {
-    throw new BridgeError("INVALID_INPUT", "Command must be valid UTF-8", 2)
+    throw new BridgeError(
+      "INVALID_INPUT",
+      msg("error.command_must_be_valid_utf_8"),
+      2,
+    )
   }
 }
 
-function emit(result: object, json: boolean): void {
+function emitResult(result: object, json: boolean, i18n: I18n): void {
   console.log(
     json
       ? JSON.stringify({ schema_version: 1, ok: true, ...result })
-      : sanitizeText(humanResult(result)),
+      : sanitizeText(humanResult(result, i18n)),
   )
 }
 
@@ -710,7 +763,9 @@ async function confirm(
   requireValue(
     process.stdin.isTTY,
     "CONFIRMATION_REQUIRED",
-    "Explicit management confirmation is required; use --confirm after review",
+    msg(
+      "error.explicit_management_confirmation_is_required_use_confirm_after_review",
+    ),
     5,
   )
   const input = createInterface({
@@ -721,7 +776,7 @@ async function confirm(
     requireValue(
       (await input.question(`${prompt} [y/N] `)).toLowerCase() === "y",
       "CONFIRMATION_REQUIRED",
-      "Operation was not confirmed",
+      msg("error.operation_was_not_confirmed"),
       5,
     )
   } finally {

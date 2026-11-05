@@ -1,10 +1,11 @@
 import { BridgeError, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 
 export function object(value: unknown, name: string): Record<string, unknown> {
   requireValue(
     value !== null && typeof value === "object" && !Array.isArray(value),
     "INVALID_INPUT",
-    `${name} must be an object`,
+    msg("error.must_be_an_object", { name }),
   )
   return value as Record<string, unknown>
 }
@@ -18,7 +19,7 @@ export function keys(
     requireValue(
       allowed.includes(key),
       "INVALID_INPUT",
-      `Unknown ${name} field: ${key}`,
+      msg("error.unknown_field", { name, key }),
     )
   }
 }
@@ -29,7 +30,7 @@ export function string(value: unknown, name: string, max = 4096): string {
       Buffer.byteLength(value) <= max &&
       !value.includes("\0"),
     "INVALID_INPUT",
-    `${name} must be a bounded string`,
+    msg("error.must_be_a_bounded_string", { name }),
   )
   return value
 }
@@ -46,7 +47,7 @@ export function integer(
       value >= min &&
       value <= max,
     "INVALID_INPUT",
-    `${name} is outside its integer range`,
+    msg("error.is_outside_its_integer_range", { name }),
   )
   return value
 }
@@ -55,7 +56,7 @@ export function boolean(value: unknown, name: string): boolean {
   requireValue(
     typeof value === "boolean",
     "INVALID_INPUT",
-    `${name} must be boolean`,
+    msg("error.must_be_boolean", { name }),
   )
   return value
 }
@@ -66,7 +67,11 @@ export function choice<const T extends readonly string[]>(
   name: string,
 ): T[number] {
   const result = string(value, name)
-  requireValue(choices.includes(result), "INVALID_INPUT", `Invalid ${name}`)
+  requireValue(
+    choices.includes(result),
+    "INVALID_INPUT",
+    msg("error.invalid", { name }),
+  )
   return result
 }
 
@@ -74,7 +79,7 @@ export function strings(value: unknown, name: string): string[] {
   requireValue(
     Array.isArray(value) && value.length <= 32,
     "INVALID_INPUT",
-    `${name} must be an array`,
+    msg("error.must_be_an_array", { name }),
   )
   return value.map((item) => string(item, name, 128))
 }
@@ -83,7 +88,9 @@ export function alias(value: string): string {
   requireValue(
     /^[A-Za-z0-9_-]{1,64}$/.test(value),
     "INVALID_INPUT",
-    "Session alias must contain 1–64 ASCII letters, digits, underscores or hyphens",
+    msg(
+      "error.session_alias_must_contain_1_64_ascii_letters_digits_underscores_or_hyphens",
+    ),
   )
   return value
 }
@@ -92,7 +99,7 @@ export function requestId(value: string): string {
   requireValue(
     /^[A-Za-z0-9._-]{1,128}$/.test(value),
     "INVALID_INPUT",
-    "Invalid request ID",
+    msg("error.invalid_request_id"),
   )
   return value
 }
@@ -101,6 +108,10 @@ export function parseJson(text: string, name: string): unknown {
   try {
     return JSON.parse(text)
   } catch {
-    throw new BridgeError("INVALID_INPUT", `${name} is not valid JSON`, 2)
+    throw new BridgeError(
+      "INVALID_INPUT",
+      msg("error.is_not_valid_json", { name }),
+      2,
+    )
   }
 }

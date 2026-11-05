@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises"
 import { join } from "node:path"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { digest, withLock } from "./locking.ts"
 import { type Binding, OPERATIONS, PREPARATION_PHASES } from "./models.ts"
 import {
@@ -63,7 +64,7 @@ export class State {
         requireValue(
           saved?.alias === name,
           "STATE_ERROR",
-          "Historical binding is missing or inconsistent",
+          msg("error.historical_binding_is_missing_or_inconsistent"),
           8,
         )
         return saved
@@ -72,7 +73,7 @@ export class State {
       requireValue(
         binding.alias === name,
         "STATE_ERROR",
-        "Binding alias does not match its record",
+        msg("error.binding_alias_does_not_match_its_record"),
         8,
       )
       requireValue(
@@ -80,15 +81,25 @@ export class State {
           this.selection.alias !== name ||
           this.selection.id === binding.id,
         "BINDING_CHANGED",
-        "The selected session_id was replaced; select a session again",
+        msg(
+          "error.the_selected_session_id_was_replaced_select_a_session_again",
+        ),
         4,
       )
       return binding
     } catch (error) {
       if (hasCode(error, "ENOENT"))
-        throw new BridgeError("INVALID_BINDING", "Session is not registered", 4)
+        throw new BridgeError(
+          "INVALID_BINDING",
+          msg("error.session_is_not_registered"),
+          4,
+        )
       if (error instanceof BridgeError && error.code === "INVALID_INPUT")
-        throw new BridgeError("STATE_ERROR", "Binding record is invalid", 8)
+        throw new BridgeError(
+          "STATE_ERROR",
+          msg("error.binding_record_is_invalid"),
+          8,
+        )
       throw privatePathError(error)
     }
   }
@@ -105,7 +116,7 @@ export class State {
     requireValue(
       !this.isHistorical(binding),
       "ARCHIVED_SESSION",
-      "This session_id is historical and read-only; select a current connection for terminal operations",
+      msg("error.archived_session_read_only"),
       4,
     )
   }
@@ -118,7 +129,9 @@ export class State {
           stat.uid === process.getuid?.() &&
           (stat.mode & 0o077) === 0,
         "UNSAFE_PATH",
-        "History directory must be a private owned directory, without symbolic links",
+        msg(
+          "error.history_directory_must_be_a_private_owned_directory_without_symbolic_links",
+        ),
         8,
       )
       return true
@@ -131,7 +144,7 @@ export class State {
     requireValue(
       /^[a-f0-9]{32}$/.test(id),
       "INVALID_INPUT",
-      "Invalid historical session_id",
+      msg("error.invalid_historical_session_id"),
     )
     if (!(await this.historyAvailable())) return null
     try {
@@ -141,7 +154,7 @@ export class State {
       requireValue(
         binding.id === id,
         "STATE_ERROR",
-        "Historical session identity mismatch",
+        msg("error.historical_session_identity_mismatch"),
         8,
       )
       return binding
@@ -164,11 +177,16 @@ export class State {
       requireValue(
         /^[a-f0-9]{32}\.json$/.test(file),
         "STATE_ERROR",
-        "Unexpected history filename",
+        msg("error.unexpected_history_filename"),
         8,
       )
       const binding = await this.historical(file.slice(0, -5))
-      requireValue(binding, "STATE_ERROR", "Historical session disappeared", 8)
+      requireValue(
+        binding,
+        "STATE_ERROR",
+        msg("error.historical_session_disappeared"),
+        8,
+      )
       saved.push(binding)
     }
     const active = new Set((await this.list()).map((binding) => binding.id))
@@ -182,7 +200,7 @@ export class State {
     requireValue(
       current.id === binding.id,
       "BINDING_CHANGED",
-      "Display name changed during archival",
+      msg("error.display_name_changed_during_archival"),
       4,
     )
     await secureDirectory(this.history)
@@ -193,7 +211,7 @@ export class State {
           saved.marker === binding.marker &&
           resourceKey(saved) === resourceKey(binding),
         "STATE_ERROR",
-        "Historical ID is associated with another resource",
+        msg("error.historical_id_is_associated_with_another_resource"),
         8,
       )
     else await writeAtomic(join(this.history, `${binding.id}.json`), binding)
@@ -216,7 +234,7 @@ export class State {
         requireValue(
           /^[a-f0-9]{64}\.json$/.test(file),
           "STATE_ERROR",
-          "Unexpected binding filename",
+          msg("error.unexpected_binding_filename"),
           8,
         )
         const binding = parseBinding(
@@ -225,7 +243,7 @@ export class State {
         requireValue(
           `${digest(binding.alias)}.json` === file,
           "STATE_ERROR",
-          "Binding filename mismatch",
+          msg("error.binding_filename_mismatch"),
           8,
         )
         result.push(binding)
@@ -235,7 +253,7 @@ export class State {
       if (error instanceof BridgeError && error.code === "INVALID_INPUT")
         throw new BridgeError(
           "STATE_ERROR",
-          "Binding registry contains invalid state",
+          msg("error.binding_registry_contains_invalid_state"),
         )
       throw privatePathError(error)
     }
@@ -244,7 +262,7 @@ export class State {
     requireValue(
       !(id !== undefined && name !== undefined),
       "INVALID_INPUT",
-      "Use either --session-id or --session, not both",
+      msg("error.use_either_session_id_or_session_not_both"),
     )
     if (name !== undefined) {
       const binding = await this.load(alias(name))
@@ -256,14 +274,14 @@ export class State {
       requireValue(
         /^[a-f0-9]{32}$/.test(id),
         "INVALID_INPUT",
-        "session_id must be the complete 32-character Bridge ID",
+        msg("error.session_id_must_be_the_complete_32_character_bridge_id"),
       )
       const matches = bindings.filter((binding) => binding.id === id)
       const selected = matches[0] ?? (await this.historical(id))
       requireValue(
         matches.length <= 1 && selected,
         "INVALID_BINDING",
-        "session_id is missing or no longer registered; inspect list",
+        msg("error.session_id_is_missing_or_no_longer_registered_inspect_list"),
         4,
       )
       this.selection = {
@@ -276,17 +294,26 @@ export class State {
     requireValue(
       bindings.length > 0,
       "INVALID_BINDING",
-      "No shared session exists; run remote-terminal connect SSH_ALIAS in a real terminal",
+      msg(
+        "error.no_shared_session_exists_run_remote_terminal_connect_ssh_alias_in_a_real_terminal",
+      ),
       4,
     )
     requireValue(
       bindings.length === 1,
       "SESSION_SELECTION_REQUIRED",
-      "Multiple sessions exist; select a session_id from remote-terminal list",
+      msg(
+        "error.multiple_sessions_exist_select_a_session_id_from_remote_terminal_list",
+      ),
       5,
     )
     const selected = bindings[0]
-    requireValue(selected, "INVALID_BINDING", "No shared session exists", 4)
+    requireValue(
+      selected,
+      "INVALID_BINDING",
+      msg("error.no_shared_session_exists"),
+      4,
+    )
     this.selection = { alias: selected.alias, id: selected.id }
     return selected.alias
   }
@@ -370,7 +397,7 @@ export function parseBinding(value: unknown): Binding {
   requireValue(
     data.schemaVersion === 1,
     "STATE_ERROR",
-    "Unsupported binding schema",
+    msg("error.unsupported_binding_schema"),
     8,
   )
   const shell = object(data.shell, "shell binding")
@@ -470,7 +497,7 @@ export function parseBinding(value: unknown): Binding {
       /^@\d+$/.test(result.windowId) &&
       /^%\d+$/.test(result.paneId),
     "STATE_ERROR",
-    "Invalid tmux identity",
+    msg("error.invalid_tmux_identity"),
     8,
   )
   return result

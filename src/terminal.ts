@@ -1,5 +1,6 @@
 import { ControlClient } from "./control.ts"
 import { BridgeError, requireValue } from "./errors.ts"
+import { createI18n, type I18n, msg } from "./i18n.ts"
 import { withLock } from "./locking.ts"
 import type { Binding } from "./models.ts"
 import { sanitizeText } from "./output.ts"
@@ -16,6 +17,7 @@ export class SharedTerminal {
   constructor(
     readonly sessions: Sessions,
     readonly workflow: Workflow,
+    readonly i18n: I18n = createI18n("en"),
   ) {}
 
   async attach(name: string): Promise<"detach" | "reconnect"> {
@@ -55,7 +57,7 @@ export class SharedTerminal {
       requireValue(
         process.stdout.writableLength + Buffer.byteLength(text) <= 1048576,
         "VIEW_OVERFLOW",
-        "Terminal output is blocked; reconnect the viewer",
+        msg("error.terminal_output_is_blocked_reconnect_the_viewer"),
         8,
       )
       return process.stdout.write(text)
@@ -64,7 +66,7 @@ export class SharedTerminal {
       write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m")
     const banner = () =>
       write(
-        `\n[Bridge ${binding.alias}] session_id=${binding.id}\nCtrl+] local menu | While Agent controls input: ? opens the menu | Scroll/select/copy normally\n`,
+        this.i18n.t("view.banner", { alias: binding.alias, id: binding.id }),
       )
     const humanOutput = new HumanTerminalOutput(write)
     const positionInput = () => {
@@ -96,9 +98,7 @@ export class SharedTerminal {
             if (!(error instanceof BridgeError) || error.code !== "BUSY")
               throw error
             if (performance.now() >= deadline) {
-              write(
-                "\r\n[Input line awaiting local ownership] Ctrl+] opens recovery/exit.\r\n",
-              )
+              write(this.i18n.t("view.wait_input"))
               return
             }
             await Bun.sleep(10)
@@ -112,8 +112,10 @@ export class SharedTerminal {
       resetLocalModes()
       write(
         ended
-          ? `\nConnection ended. Old results may be unknown.\n${binding.sshAlias ? "[r] Reconnect in this window (manual login; new session_id) | " : ""}[q] Exit\n`
-          : "\n[Local menu] [t] Take over (does not stop a remote program) | [c] Continue viewing | [q] Detach\n",
+          ? this.i18n.t("view.ended", {
+              reconnect: binding.sshAlias ? this.i18n.t("view.reconnect") : "",
+            })
+          : this.i18n.t("view.menu"),
       )
     }
     const update = async () => {
@@ -121,12 +123,12 @@ export class SharedTerminal {
       requireValue(
         binding.id === initial.id,
         "BINDING_CHANGED",
-        "Session identity changed",
+        msg("error.session_identity_changed"),
         4,
       )
       if (binding.shell.nonce && binding.shell.nonce !== nonce) {
         nonce = binding.shell.nonce
-        output = new TerminalOutput(nonce, write)
+        output = new TerminalOutput(nonce, write, this.i18n)
       }
       const mode =
         binding.control === "human"
@@ -147,12 +149,12 @@ export class SharedTerminal {
         if (mode !== "human" || !takingOver)
           write(
             mode === "human"
-              ? "\n[You control input] Finish login/inspection, then tell your Agent the shell is ready. Ctrl+] opens the local menu.\n"
+              ? this.i18n.t("view.human")
               : mode === "preparing"
-                ? "\n[Preparing shared shell…] Ctrl+] local menu\n"
+                ? this.i18n.t("view.preparing")
                 : mode === "agent"
-                  ? "\n[Agent controls input] Press ? then t to take over; Ctrl+] also opens the local menu.\n"
-                  : "\n[Needs inspection] Remote outcome may be unknown. Press ? then t to take over; Ctrl+] also opens the local menu.\n",
+                  ? this.i18n.t("view.agent")
+                  : this.i18n.t("view.inspect"),
           )
         if (mode === "human" && !takingOver) await positionInput()
         blockedNotice = false
@@ -171,7 +173,7 @@ export class SharedTerminal {
               requireValue(
                 current.id === initial.id,
                 "BINDING_CHANGED",
-                "Session identity changed",
+                msg("error.session_identity_changed"),
                 4,
               )
               requireValue(
@@ -180,7 +182,7 @@ export class SharedTerminal {
                   received.generation === current.generation &&
                   received.shell.nonce === current.shell.nonce,
                 "INPUT_OWNED",
-                "Agent controls input",
+                msg("error.agent_controls_input"),
                 5,
               )
               await this.sessions.verify(current, true)
@@ -196,9 +198,7 @@ export class SharedTerminal {
           )
             throw error
           if (!blockedNotice) {
-            write(
-              "\n[Input blocked while Agent operates] Press ? then t to take over; Ctrl+] also opens the menu. Scroll/select/copy remain available.\n",
-            )
+            write(this.i18n.t("view.blocked"))
             blockedNotice = true
           }
         }
@@ -215,12 +215,12 @@ export class SharedTerminal {
         else if (key === "c" && !ended) {
           menu = false
           inputEpoch++
-          write("\n[Viewing resumed] Ctrl+] local menu\n")
+          write(this.i18n.t("view.continue"))
           if (received.control === "human") await positionInput()
         } else if (key === "t" && !ended) {
           takingOver = true
           inputEpoch++
-          write("\n[Returning input control…]\n")
+          write(this.i18n.t("view.taking_over"))
           try {
             const result = await this.workflow.takeover(
               name,
@@ -230,13 +230,18 @@ export class SharedTerminal {
             inputEpoch++
             write(
               result.taken_over
-                ? "\n[Input returned to you] A previously running program may still run. Inspect before typing.\n"
-                : "\n[Connection no longer usable]\n",
+                ? this.i18n.t("view.taken_over")
+                : this.i18n.t("view.unusable"),
             )
             if (result.taken_over) await positionInput()
           } catch (error) {
             write(
-              `\n[Takeover failed] ${error instanceof BridgeError ? error.message : "Inspect local state"}. Input remains blocked; Ctrl+] local menu.\n`,
+              this.i18n.t("view.takeover_failed", {
+                reason:
+                  error instanceof BridgeError
+                    ? this.i18n.text(error.userMessage)
+                    : this.i18n.t("view.inspect_local"),
+              }),
             )
             menu = false
             inputEpoch++
@@ -266,7 +271,7 @@ export class SharedTerminal {
       // A key received during blocked ownership/menu work must never be
       // forwarded later merely because takeover has since completed.
       if (inputBytes + bytes.length > 65536) {
-        write("\n[Input buffer full; input discarded] Use Ctrl+] local menu.\n")
+        write(this.i18n.t("view.input_full"))
         return
       }
       clearTimeout(keyTimer)
@@ -353,7 +358,9 @@ export class SharedTerminal {
             if (queue.length + bytes.length > 1048576) {
               failure = new BridgeError(
                 "VIEW_OVERFLOW",
-                "Terminal viewer fell behind; reconnect the viewer to inspect the session",
+                msg(
+                  "error.terminal_viewer_fell_behind_reconnect_the_viewer_to_inspect_the_session",
+                ),
                 8,
               )
               done = "detach"
@@ -432,7 +439,7 @@ export class SharedTerminal {
       await Promise.allSettled([inputWork, resizeWork, humanWork])
       await control?.close()
       resetLocalModes()
-      write("\n[Left shared terminal; remote jobs were not interrupted]\n")
+      write(this.i18n.t("view.detached"))
     }
   }
 }

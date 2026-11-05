@@ -1,8 +1,9 @@
+import { lstat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { accessDenied, BridgeError, hasCode, requireValue } from "./errors.ts"
+import { LANGUAGE_SETTINGS, msg } from "./i18n.ts"
 import { type Config, OPERATIONS, type Operation } from "./models.ts"
-import { checkExistingFile } from "./security.ts"
 import {
   alias,
   boolean,
@@ -22,6 +23,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     join(homedir(), ".local/state"),
   )
   const config: Config = {
+    language: "auto",
     session: "remote",
     captureLines: 200,
     timeoutSeconds: 30,
@@ -40,23 +42,38 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     : join(configHome, "agent-terminal-bridge/config.json")
   let text: string
   try {
-    await checkExistingFile(path)
+    const info = await lstat(path)
+    requireValue(
+      info.isFile() &&
+        !info.isSymbolicLink() &&
+        info.uid === process.getuid?.() &&
+        (info.mode & 0o022) === 0,
+      "INVALID_CONFIG",
+      msg("config.unsafe_file", { path }),
+    )
     const file = Bun.file(path)
     requireValue(
       file.size <= 65536,
       "INVALID_CONFIG",
-      "Configuration exceeds 64 KiB",
+      msg("error.configuration_exceeds_64_kib"),
     )
     text = await file.text()
   } catch (error) {
     if (!explicitPath && hasCode(error, "ENOENT")) return config
+    if (error instanceof BridgeError) throw error
     if (accessDenied(error))
       throw new BridgeError(
         "LOCAL_ACCESS_DENIED",
-        "Cannot read local Bridge configuration",
+        msg("error.cannot_read_local_bridge_configuration"),
         5,
       )
-    throw new BridgeError("INVALID_CONFIG", "Cannot read configuration", 2)
+    throw new BridgeError(
+      "INVALID_CONFIG",
+      hasCode(error, "ENOENT")
+        ? msg("config.missing_file", { path })
+        : msg("config.cannot_read", { path }),
+      2,
+    )
   }
   const root = object(parseJson(text, "Configuration"), "configuration")
   keys(
@@ -74,7 +91,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
   requireValue(
     root.schema_version === 1,
     "INVALID_CONFIG",
-    "Unsupported configuration schema",
+    msg("error.unsupported_configuration_schema"),
   )
   if (root.defaults !== undefined) {
     const defaults = object(root.defaults, "defaults")
@@ -82,6 +99,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
       defaults,
       [
         "session",
+        "language",
         "capture_lines",
         "timeout_seconds",
         "max_timeout_seconds",
@@ -93,6 +111,8 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     )
     if (defaults.session !== undefined)
       config.session = alias(string(defaults.session, "session"))
+    if (defaults.language !== undefined)
+      config.language = choice(defaults.language, LANGUAGE_SETTINGS, "language")
     if (defaults.capture_lines !== undefined)
       config.captureLines = integer(
         defaults.capture_lines,
@@ -139,7 +159,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
   requireValue(
     config.timeoutSeconds <= config.maxTimeoutSeconds,
     "INVALID_CONFIG",
-    "Default timeout exceeds maximum",
+    msg("error.default_timeout_exceeds_maximum"),
   )
   if (root.backend !== undefined) {
     const backend = object(root.backend, "backend")
@@ -148,7 +168,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
       requireValue(
         backend.type === "tmux",
         "INVALID_CONFIG",
-        "Unsupported backend",
+        msg("error.unsupported_backend"),
       )
     if (backend.socket_name !== undefined)
       config.socketName = alias(string(backend.socket_name, "socket_name"))
@@ -157,14 +177,14 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
       requireValue(
         /^\d+\.\d+[a-z]?$/.test(version),
         "INVALID_CONFIG",
-        "Invalid minimum tmux version",
+        msg("error.invalid_minimum_tmux_version"),
       )
       requireValue(
         Number(version.split(".")[0]) > 3 ||
           (Number(version.split(".")[0]) === 3 &&
             Number.parseInt(version.split(".")[1] ?? "0", 10) >= 2),
         "INVALID_CONFIG",
-        "tmux minimum cannot be below 3.2",
+        msg("error.tmux_minimum_cannot_be_below_3_2"),
       )
       config.minimumTmux = version
     }
@@ -189,14 +209,14 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
         requireValue(
           security[key] === true,
           "INVALID_CONFIG",
-          `${key} cannot be disabled`,
+          msg("error.cannot_be_disabled", { key }),
         )
     }
     if (security.allow_auto_interrupt !== undefined)
       requireValue(
         security.allow_auto_interrupt === false,
         "INVALID_CONFIG",
-        "Automatic interruption is unsupported",
+        msg("error.automatic_interruption_is_unsupported"),
       )
     if (security.allow_raw_send !== undefined)
       config.allowRawSend = boolean(security.allow_raw_send, "allow_raw_send")
@@ -208,7 +228,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
       requireValue(
         value === false,
         "INVALID_CONFIG",
-        "Command/output persistence is not enabled in this release",
+        msg("error.command_output_persistence_is_not_enabled_in_this_release"),
       )
   }
   if (root.session_policies !== undefined) {
@@ -216,7 +236,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     requireValue(
       Object.keys(policies).length <= 128,
       "INVALID_CONFIG",
-      "Too many session policies",
+      msg("error.too_many_session_policies"),
     )
     for (const [name, value] of Object.entries(policies)) {
       alias(name)
@@ -249,6 +269,10 @@ export function effectivePermissions(
 function absoluteEnv(name: string, fallback: string): string {
   const value = process.env[name]
   if (!value) return fallback
-  requireValue(isAbsolute(value), "INVALID_CONFIG", `${name} must be absolute`)
+  requireValue(
+    isAbsolute(value),
+    "INVALID_CONFIG",
+    msg("error.must_be_absolute", { name }),
+  )
   return resolve(value)
 }

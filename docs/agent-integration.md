@@ -31,4 +31,6 @@ In Agent mode, direct the human to ? → t for local takeover. Ctrl+] opens the 
 
 A ready execution session has a valid binding, a confirmed `bash-v1` shell, Agent control and no unresolved task. Status itself never probes the shell or proves a remote connection remains healthy. Every execution still calls the current initialized entrypoint.
 
+`awaiting_human` means shell preparation has not completed, including when the human has already logged in. If the conversation already confirms login/target selection and hands over the selected idle shell, call `ready --session-id ID --confirm --json`; do not ask for the same confirmation again or wait for login to change status. `next_action.requires_confirmation=true` describes this prerequisite, which an applicable handoff from an earlier turn can satisfy while the session is unchanged. An ID alone does not establish handoff; after takeover, reconnection, a binding/shell change or an unknown outcome, follow the corresponding handoff/recovery workflow again.
+
 [examples/AGENTS.md](../examples/AGENTS.md) is a runtime-use example. The repository-root AGENTS.md instead governs development of the tool.

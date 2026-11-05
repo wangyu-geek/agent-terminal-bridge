@@ -45,6 +45,8 @@ Run changed test files during iteration. Test actual behavior and durable/termin
 
 Screen rendering tests use the exact development-only `@xterm/headless` version in package.json to inspect terminal cells after takeover and editing. It is not bundled into the runtime. The optional macOS Codex sandbox test exercises an installed helper; a missing helper is reported as a skip, not a sandbox compatibility pass.
 
+Human-facing messages use stable keys in `src/locales/en.ts` and `src/locales/zh-CN.ts`. Keep keys and named placeholders aligned; the English catalog defines the parameter types. Use `msg()` when a core error or result needs a localized display and `i18n.t()` only at a human display boundary. A `Message` serializes to canonical English through `toJSON()`; preserve that behavior for the Agent contract. Never translate remote output, command bodies, protocol tokens or durable state values. Pass the invocation's language explicitly rather than changing process locale or introducing global mutable language state. Language tests control their own environment; terminal-cell tests exercise both languages, and packaging smoke checks confirm embedded Chinese text outside the checkout.
+
 Preserve existing work. Do not stage unrelated files, erase untracked content or rewrite history. Commit and push only when requested, with a concise conventional title such as `fix(protocol): retain split UTF-8 bytes`.
 
 Changes to CLI fields, exit codes, shell semantics or recovery states need corresponding contract tests and documentation. Never remove a guard or silently resend an uncertain request to make a test pass. Packaging changes must be exercised outside the source directory against both the bundle and standalone executable.

@@ -2,6 +2,7 @@ import { lstat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { effectivePermissions } from "./config.ts"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { processIdentity } from "./identity.ts"
 import {
   digest,
@@ -49,7 +50,7 @@ export class Sessions {
       requireValue(
         /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(ssh),
         "INVALID_INPUT",
-        "SSH destination must be a configuration alias",
+        msg("error.ssh_destination_must_be_a_configuration_alias"),
       )
     return withLock(this.state.locks, "registry", async () => {
       const existing = (await this.state.list()).find(
@@ -59,7 +60,9 @@ export class Sessions {
         requireValue(
           !fresh,
           "SESSION_CONFLICT",
-          "Session name is already registered; select it explicitly or choose a new --session name",
+          msg(
+            "error.session_name_is_already_registered_select_it_explicitly_or_choose_a_new_session_name",
+          ),
           4,
         )
         await this.verify(existing)
@@ -74,13 +77,13 @@ export class Sessions {
     requireValue(
       Bun.which("ssh"),
       "DEPENDENCY_MISSING",
-      "Local OpenSSH is required for a new connection",
+      msg("error.local_openssh_is_required_for_a_new_connection"),
       3,
     )
     requireValue(
       /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(ssh),
       "INVALID_INPUT",
-      "SSH destination must be a configuration alias",
+      msg("error.ssh_destination_must_be_a_configuration_alias"),
     )
     return withLock(this.state.locks, "registry", async () => {
       const occupied = new Set(
@@ -93,7 +96,9 @@ export class Sessions {
         requireValue(
           !occupied.has(name),
           "SESSION_CONFLICT",
-          "This display name is occupied; return to it explicitly or use --new without --session",
+          msg(
+            "error.this_display_name_is_occupied_return_to_it_explicitly_or_use_new_without_session",
+          ),
           4,
         )
       else {
@@ -113,7 +118,7 @@ export class Sessions {
         requireValue(
           binding.id === expectedId,
           "BINDING_CHANGED",
-          "Session changed before archival",
+          msg("error.session_changed_before_archival"),
           4,
         )
         let ended = false
@@ -130,7 +135,7 @@ export class Sessions {
         requireValue(
           ended,
           "SESSION_CONFLICT",
-          "A live connection cannot be retired to reuse its name",
+          msg("error.a_live_connection_cannot_be_retired_to_reuse_its_name"),
           4,
         )
         await this.state.archive(binding)
@@ -205,7 +210,7 @@ export class Sessions {
     requireValue(
       /^%\d+$/.test(paneId),
       "PROTOCOL_ERROR",
-      "tmux did not create the expected pane",
+      msg("error.tmux_did_not_create_the_expected_pane"),
       8,
     )
     try {
@@ -232,14 +237,14 @@ export class Sessions {
     requireValue(
       /^%\d+$/.test(paneId),
       "INVALID_INPUT",
-      "An exact pane ID such as %3 is required",
+      msg("error.an_exact_pane_id_such_as_3_is_required"),
     )
     await checkTmux(this.config.minimumTmux)
     return withLock(this.state.locks, "registry", async () => {
       requireValue(
         !(await this.state.list()).some((binding) => binding.alias === name),
         "INVALID_BINDING",
-        "Alias is already registered",
+        msg("error.alias_is_already_registered"),
         4,
       )
       return this.register(
@@ -268,7 +273,9 @@ export class Sessions {
         !pane.marker &&
         (await tmux.memberships(paneId)).length === 1,
       "INVALID_BINDING",
-      "Pane is exited, already marked or linked into multiple sessions",
+      msg(
+        "error.pane_is_exited_already_marked_or_linked_into_multiple_sessions",
+      ),
       4,
     )
     const canonical = await canonicalSocket(socket)
@@ -280,7 +287,7 @@ export class Sessions {
           binding.paneId === paneId,
       ),
       "INVALID_BINDING",
-      "Pane is already registered",
+      msg("error.pane_is_already_registered"),
       4,
     )
     const marker = randomNonce()
@@ -349,7 +356,9 @@ export class Sessions {
     requireValue(
       !clients.some((client) => !client.control && !client.readonly),
       "RECOVERY_REQUIRED",
-      "A writable human client conflicts with Agent preparation or execution",
+      msg(
+        "error.a_writable_human_client_conflicts_with_agent_preparation_or_execution",
+      ),
       9,
     )
   }
@@ -363,7 +372,7 @@ export class Sessions {
     requireValue(
       stat?.isSocket() && stat.uid === process.getuid?.(),
       "BINDING_CHANGED",
-      "Bound socket is missing or changed",
+      msg("error.bound_socket_is_missing_or_changed"),
       4,
     )
     const tmux = new Tmux(binding.socketPath)
@@ -374,7 +383,7 @@ export class Sessions {
       if (error instanceof BridgeError && error.code === "TMUX_OBJECT_MISSING")
         throw new BridgeError(
           "BINDING_CHANGED",
-          "Bound pane no longer exists",
+          msg("error.bound_pane_no_longer_exists"),
           4,
         )
       throw error
@@ -388,33 +397,33 @@ export class Sessions {
         (pane.pid === binding.panePid || (pane.dead && pane.pid === 0)) &&
         pane.marker === binding.marker,
       "BINDING_CHANGED",
-      "Bound pane identity changed",
+      msg("error.bound_pane_identity_changed"),
       4,
     )
     requireValue(
       (await tmux.memberships(binding.paneId)).length === 1,
       "BINDING_CHANGED",
-      "Pane is linked into another session",
+      msg("error.pane_is_linked_into_another_session"),
       4,
     )
     requireValue(
       (await processIdentity(binding.serverPid)) === binding.serverProcess,
       "BINDING_CHANGED",
-      "tmux server process changed",
+      msg("error.tmux_server_process_changed"),
       4,
     )
     if (!pane.dead)
       requireValue(
         (await processIdentity(binding.panePid)) === binding.paneProcess,
         "BINDING_CHANGED",
-        "Pane process changed",
+        msg("error.pane_process_changed"),
         4,
       )
     if (write)
       requireValue(
         !pane.dead && !pane.synchronized && !pane.inMode,
         "SHELL_CONFIRMATION_REQUIRED",
-        "Pane exited, is in a tmux mode, or has synchronized input",
+        msg("error.pane_exited_is_in_a_tmux_mode_or_has_synchronized_input"),
         5,
       )
     return pane
@@ -429,7 +438,7 @@ export class Sessions {
         binding.permissions,
       ).includes(operation),
       "PERMISSION_DENIED",
-      "Operation is not authorized for this binding",
+      msg("error.operation_is_not_authorized_for_this_binding"),
       5,
     )
   }
@@ -492,14 +501,14 @@ export class Sessions {
       ),
       message:
         displayState === "ready"
-          ? "Execute the user-authorized task."
+          ? msg("action.execute")
           : displayState === "awaiting_human"
-            ? "Finish login and target selection, then tell your Agent the shell is ready."
+            ? msg("action.ready", { id: binding.id })
             : displayState === "needs_human"
               ? binding.control === "human"
-                ? "Inspect and resolve the terminal state, then confirm resume."
-                : "Take over, inspect and resolve the terminal state, then resume."
-              : "Wait for this operation or explicitly request takeover.",
+                ? msg("action.resume")
+                : msg("action.takeover")
+              : msg("action.wait"),
     }
     const details = {
       session_id: binding.id,
@@ -546,8 +555,7 @@ export class Sessions {
           action: "query_history",
           session_id: binding.id,
           requires_confirmation: false,
-          message:
-            "This ID is historical. Query old request IDs here; terminal operations require the current connection's ID.",
+          message: msg("action.history"),
         },
       }
     try {
@@ -562,8 +570,7 @@ export class Sessions {
               action: "reconnect",
               session_id: binding.id,
               requires_confirmation: true,
-              message:
-                "The local connection process exited. Use r in the connect view to explicitly reconnect with a new session_id; old unknown requests remain unchanged.",
+              message: msg("action.exited"),
             }
           : nextAction,
         binding: "valid",
@@ -621,13 +628,16 @@ export class Sessions {
           },
           task: { state: task?.state ?? "idle", request_id: task?.id ?? null },
           permissions: [],
-          error: { code: error.code, message: error.message, retryable: false },
+          error: {
+            code: error.code,
+            message: error.userMessage,
+            retryable: false,
+          },
           next_action: {
             action: "inspect_local_access",
             session_id: binding.id,
             requires_confirmation: true,
-            message:
-              "Run doctor for this session and grant the required local filesystem, Unix socket and process inspection access.",
+            message: msg("action.local_access"),
           },
         }
       if (
@@ -643,8 +653,7 @@ export class Sessions {
           action: "reconnect",
           session_id: binding.id,
           requires_confirmation: true,
-          message:
-            "Open connect for this session, then explicitly choose r to reconnect with a new session_id. Old unknown requests remain unchanged.",
+          message: msg("action.reconnect"),
         },
         binding: "stale",
         pane: { id: binding.paneId, state: "missing", pid: null },
@@ -690,7 +699,7 @@ export class Sessions {
         requireValue(
           !writable || binding.control === "human",
           "PERMISSION_DENIED",
-          "Take over before attaching with input permission",
+          msg("error.take_over_before_attaching_with_input_permission"),
           5,
         )
         const tmux = new Tmux(binding.socketPath)
@@ -711,14 +720,14 @@ export class Sessions {
         }
         throw new BridgeError(
           "TIMEOUT",
-          "Terminal client did not attach before its deadline",
+          msg("error.terminal_client_did_not_attach_before_its_deadline"),
           7,
         )
       })
       requireValue(
         child,
         "LOCAL_IO_ERROR",
-        "Terminal client was not created",
+        msg("error.terminal_client_was_not_created"),
         8,
       )
       return await child.exited
@@ -738,7 +747,7 @@ export class Sessions {
       requireValue(
         pane.alternate,
         "SCREEN_MISSING",
-        "No alternate screen exists",
+        msg("error.no_alternate_screen_exists"),
         5,
       )
     if (screen === "mode") {
@@ -746,13 +755,13 @@ export class Sessions {
       requireValue(
         tmuxCommandCapabilities(commands).capture_mode_screen,
         "UNSUPPORTED_CAPABILITY",
-        "This tmux build cannot capture copy-mode screens",
+        msg("error.this_tmux_build_cannot_capture_copy_mode_screens"),
         3,
       )
       requireValue(
         pane.inMode,
         "SCREEN_MISSING",
-        "Pane is not in a tmux mode",
+        msg("error.pane_is_not_in_a_tmux_mode"),
         5,
       )
     }
@@ -767,7 +776,7 @@ export class Sessions {
     requireValue(
       after.alternate === pane.alternate && after.inMode === pane.inMode,
       "SCREEN_CHANGED",
-      "Terminal screen changed during capture; inspect it again",
+      msg("error.terminal_screen_changed_during_capture_inspect_it_again"),
       5,
     )
     const output = truncateUtf8(sanitizeText(raw), this.config.maxOutputBytes)
@@ -795,7 +804,7 @@ export class Sessions {
         binding.control === "recovery_required"
           ? "RECOVERY_REQUIRED"
           : "PERMISSION_DENIED",
-        "Raw input requires human control",
+        msg("error.raw_input_requires_human_control"),
         binding.control === "recovery_required" ? 9 : 5,
       )
       binding.shell = emptyShell("unknown")
@@ -814,7 +823,9 @@ export class Sessions {
       } catch {
         throw new BridgeError(
           "RAW_INPUT_UNKNOWN",
-          "Input may be partial; inspect the terminal and explicitly hand control back to human",
+          msg(
+            "error.input_may_be_partial_inspect_the_terminal_and_explicitly_hand_control_back_to_human",
+          ),
           8,
           false,
           "unknown",
@@ -836,7 +847,9 @@ export class Sessions {
         requireValue(
           binding.shell.state === "confirmed",
           "SHELL_CONFIRMATION_REQUIRED",
-          "Confirm the shell before handing execution control to an Agent",
+          msg(
+            "error.confirm_the_shell_before_handing_execution_control_to_an_agent",
+          ),
           5,
         )
         for (const client of clients.filter((item) => !item.control)) {
@@ -898,7 +911,7 @@ export class Sessions {
       requireValue(
         binding.ownership === "managed",
         "PERMISSION_DENIED",
-        "External panes can only be unbound",
+        msg("error.external_panes_can_only_be_unbound"),
         5,
       )
       await this.verify(binding)

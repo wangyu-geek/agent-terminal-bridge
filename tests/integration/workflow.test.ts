@@ -107,7 +107,7 @@ integration(
 )
 
 integration(
-  "CLI lifecycle uses session_id without requiring a hostname",
+  "CLI lifecycle prepares an awaiting_human shell by session_id without requiring a hostname",
   async () => {
     const { fixture } = await fresh("/bin/bash")
     const actualVersion = /version (\d+\.\d+\.\d+)/.exec(
@@ -119,6 +119,50 @@ integration(
     expect(before.result.target_environment).toMatchObject({
       state: "not_checked",
     })
+    const unprepared = await fixture.binding()
+    const capture = await fixture.cli(["capture", "--session-id", id, "--json"])
+    for (let i = 0; i < 2; i++) {
+      const waiting = await fixture.cli([
+        "status",
+        "--session-id",
+        id,
+        "--json",
+      ])
+      expect(waiting.code).toBe(0)
+      expect(waiting.result).toMatchObject({
+        display_state: "awaiting_human",
+        control: "human",
+        shell: { state: "uninitialized" },
+        next_action: {
+          action: "confirm_ready",
+          session_id: id,
+          requires_confirmation: true,
+        },
+      })
+      const next = object(waiting.result.next_action, "next action")
+      expect(next.message).toContain("status does not check login")
+      expect(next.message).toContain(
+        `remote-terminal ready --session-id ${id} --confirm --json`,
+      )
+    }
+    const humanStatus = await fixture.cli(["status", "--session-id", id])
+    expect(humanStatus.code).toBe(0)
+    expect(humanStatus.stdout).toContain("login is not checked")
+    const unconfirmed = await fixture.cli([
+      "ready",
+      "--session-id",
+      id,
+      "--json",
+    ])
+    expect(unconfirmed.code).toBe(5)
+    expect(unconfirmed.result).toMatchObject({
+      error: { code: "CONFIRMATION_REQUIRED" },
+    })
+    expect(await fixture.binding()).toEqual(unprepared)
+    expect(
+      (await fixture.cli(["capture", "--session-id", id, "--json"])).result
+        .terminal_output,
+    ).toBe(capture.result.terminal_output)
     const ready = await fixture.cli([
       "ready",
       "--session-id",

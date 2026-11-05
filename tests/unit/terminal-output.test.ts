@@ -12,6 +12,26 @@ const frame = (body: string) =>
 const displayFrame = (body: string) =>
   Buffer.from(`\x1eATBV1|${nonce}|${request}|COMMAND|${body}\x1f`)
 
+test("human output consumes split cursor queries without removing adjacent display bytes", () => {
+  const before = Buffer.from("菜单\x1b[2K\x1b[6m")
+  const after = Buffer.from("验证码> \x1b[0m")
+  const traffic = Buffer.concat([
+    before,
+    Buffer.from("\x1b[6n\x1b[6n"),
+    frame("END|0"),
+    after,
+  ])
+  for (let split = 0; split <= traffic.length; split++) {
+    const parts: Buffer[] = []
+    const view = new HumanTerminalOutput((bytes) =>
+      parts.push(Buffer.from(bytes)),
+    )
+    view.feed(traffic.subarray(0, split))
+    view.feed(traffic.subarray(split))
+    expect(Buffer.concat(parts)).toEqual(Buffer.concat([before, after]))
+  }
+})
+
 test("manual output preserves login bytes and split Unicode, hiding a late END after takeover", () => {
   const parts: Buffer[] = []
   const view = new HumanTerminalOutput((bytes) =>

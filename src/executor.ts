@@ -1,5 +1,6 @@
 import { ControlClient } from "./control.ts"
 import { BridgeError, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { processIdentity } from "./identity.ts"
 import { digest, withLock } from "./locking.ts"
 import { type Binding, emptyShell } from "./models.ts"
@@ -43,7 +44,7 @@ export class Executor {
         requireValue(
           binding.control === "human",
           "PERMISSION_DENIED",
-          "Initialization requires human control",
+          msg("error.initialization_requires_human_control"),
           5,
         )
         const nonce = randomNonce()
@@ -67,7 +68,7 @@ export class Executor {
         Buffer.byteLength(expectedHost) <= 255 &&
         !expectedHost.includes("\n"),
       "INVALID_INPUT",
-      "An expected hostname is required",
+      msg("error.an_expected_hostname_is_required"),
     )
     const original = await this.sessions.state.load(name)
     return withLock(
@@ -81,7 +82,7 @@ export class Executor {
             binding.shell.state === "pending" &&
             binding.shell.nonce,
           "SHELL_CONFIRMATION_REQUIRED",
-          "Generate and install shell initialization first",
+          msg("error.generate_and_install_shell_initialization_first"),
           5,
         )
         await this.tasks.requireIdle(binding)
@@ -100,13 +101,17 @@ export class Executor {
             await this.sessions.state.save(binding)
             throw new BridgeError(
               "ENDPOINT_MISMATCH",
-              "Reported hostname does not match the user-confirmed destination",
+              msg(
+                "error.reported_hostname_does_not_match_the_user_confirmed_destination",
+              ),
               5,
             )
           }
           throw new BridgeError(
             "SHELL_CONFIRMATION_REQUIRED",
-            "Shell handshake did not complete; inspect the session and recover",
+            msg(
+              "error.shell_handshake_did_not_complete_inspect_the_session_and_recover",
+            ),
             9,
           )
         }
@@ -141,7 +146,7 @@ export class Executor {
         !command.includes("\0") &&
         Buffer.byteLength(command) <= this.sessions.config.maxCommandBytes,
       "COMMAND_TOO_LARGE",
-      "Command is empty, contains NUL or exceeds its byte limit",
+      msg("error.command_is_empty_contains_nul_or_exceeds_its_byte_limit"),
     )
     const original = await this.sessions.state.load(name)
     let dispatched = false
@@ -158,7 +163,9 @@ export class Executor {
               existing.fingerprint === digest(command) &&
                 existing.kind === "run",
               "REQUEST_CONFLICT",
-              "Request ID is already associated with another command",
+              msg(
+                "error.request_id_is_already_associated_with_another_command",
+              ),
             )
             return taskResult(binding, await this.tasks.observe(existing))
           }
@@ -168,7 +175,7 @@ export class Executor {
               binding.shell.state === "confirmed" &&
               binding.shell.nonce,
             "SHELL_CONFIRMATION_REQUIRED",
-            "A confirmed shell and Agent control are required",
+            msg("error.a_confirmed_shell_and_agent_control_are_required"),
             5,
           )
           return (
@@ -186,7 +193,9 @@ export class Executor {
         throw error
       throw new BridgeError(
         "STATE_ERROR",
-        "Execution coordination failed after dispatch; inspect durable request history",
+        msg(
+          "error.execution_coordination_failed_after_dispatch_inspect_durable_request_history",
+        ),
         8,
         false,
         "unknown",
@@ -208,13 +217,17 @@ export class Executor {
     requireValue(
       transaction.result.ok && probe,
       "SHELL_CONFIRMATION_REQUIRED",
-      "Shell handshake failed; take over, inspect the terminal and resume",
+      msg(
+        "error.shell_handshake_failed_take_over_inspect_the_terminal_and_resume",
+      ),
       9,
     )
     requireValue(
       expectedHost === undefined || probe.host === expectedHost,
       "ENDPOINT_MISMATCH",
-      "Reported hostname does not match the explicitly requested destination",
+      msg(
+        "error.reported_hostname_does_not_match_the_explicitly_requested_destination",
+      ),
       5,
     )
     return probe
@@ -224,7 +237,12 @@ export class Executor {
     const binding = await this.sessions.state.load(name)
     this.sessions.requirePermission(binding, "read")
     const task = await this.tasks.get(binding, requestId(id))
-    requireValue(task, "REQUEST_MISSING", "Request does not exist", 4)
+    requireValue(
+      task,
+      "REQUEST_MISSING",
+      msg("error.request_does_not_exist"),
+      4,
+    )
     return taskResult(binding, await this.tasks.observe(task))
   }
 
@@ -239,14 +257,14 @@ export class Executor {
         requireValue(
           task && isPending(task),
           "RECOVERY_REQUIRED",
-          "No matching unresolved request exists",
+          msg("error.no_matching_unresolved_request_exists"),
           9,
         )
         const active = await this.tasks.active(binding)
         requireValue(
           !active || active.id === id,
           "REQUEST_CONFLICT",
-          "Another unresolved request is active",
+          msg("error.another_unresolved_request_is_active"),
         )
         task.state = "unknown"
         task.exitCode = null
@@ -296,13 +314,15 @@ export class Executor {
         requireValue(
           active && active.id === requestId(id) && isPending(active),
           "REQUEST_MISSING",
-          "No matching active request exists",
+          msg("error.no_matching_active_request_exists"),
           4,
         )
         requireValue(
           (await this.tasks.observe(active)).state !== "unknown",
           "RECOVERY_REQUIRED",
-          "No live execution coordinator remains; use explicit manual takeover",
+          msg(
+            "error.no_live_execution_coordinator_remains_use_explicit_manual_takeover",
+          ),
           9,
         )
         await this.sessions.verify(binding, true)
@@ -341,7 +361,7 @@ export class Executor {
           requireValue(
             task && task.id === requestId(id) && isPending(task),
             "REQUEST_MISSING",
-            "No matching unresolved request exists",
+            msg("error.no_matching_unresolved_request_exists"),
             4,
           )
           task.state = "unknown"
@@ -389,14 +409,14 @@ export class Executor {
     requireValue(
       binding.shell.nonce && /^[a-f0-9]{32}$/.test(binding.shell.nonce),
       "SHELL_CONFIRMATION_REQUIRED",
-      "Current shell initialization is missing",
+      msg("error.current_shell_initialization_is_missing"),
       5,
     )
     const pane = await this.sessions.verify(binding, true)
     requireValue(
       !pane.alternate,
       "SHELL_CONFIRMATION_REQUIRED",
-      "Alternate-screen applications cannot receive exec requests",
+      msg("error.alternate_screen_applications_cannot_receive_exec_requests"),
       5,
     )
     const tmux = new Tmux(binding.socketPath)
@@ -415,7 +435,7 @@ export class Executor {
     requireValue(
       panes.length === 1 && panes[0] === binding.paneId,
       "UNSUPPORTED_CAPABILITY",
-      "exec requires a dedicated single-pane session",
+      msg("error.exec_requires_a_dedicated_single_pane_session"),
       3,
     )
     await this.checkClients(binding, kind, preparing)
@@ -424,7 +444,7 @@ export class Executor {
     requireValue(
       Buffer.byteLength(line) <= this.sessions.config.maxInputLineBytes,
       "COMMAND_TOO_LARGE",
-      "Encoded execution line exceeds its limit",
+      msg("error.encoded_execution_line_exceeds_its_limit"),
     )
     const parser = new FrameParser(
       binding.shell.nonce,
@@ -482,13 +502,15 @@ export class Executor {
         if (changed)
           throw new BridgeError(
             "BINDING_CHANGED",
-            "Terminal topology or mode changed during execution",
+            msg("error.terminal_topology_or_mode_changed_during_execution"),
             4,
           )
         if (performance.now() >= deadline)
           throw new BridgeError(
             "TIMEOUT",
-            "Deadline exceeded; the remote command may still be running",
+            msg(
+              "error.deadline_exceeded_the_remote_command_may_still_be_running",
+            ),
             7,
           )
         if (parser.running && task.state !== "running") {
@@ -508,7 +530,9 @@ export class Executor {
           if (signal.type === "takeover")
             throw new BridgeError(
               "MANUAL_TAKEOVER",
-              "User requested manual takeover; command outcome is uncertain",
+              msg(
+                "error.user_requested_manual_takeover_command_outcome_is_uncertain",
+              ),
               9,
             )
           await control.command(`send-keys -t ${binding.paneId} C-c`, deadline)
@@ -526,13 +550,13 @@ export class Executor {
       if (changed)
         throw new BridgeError(
           "BINDING_CHANGED",
-          "Terminal changed before completion was committed",
+          msg("error.terminal_changed_before_completion_was_committed"),
           4,
         )
       if (parser.completedAt !== null && parser.completedAt > deadline)
         throw new BridgeError(
           "TIMEOUT",
-          "Completion arrived after the execution deadline",
+          msg("error.completion_arrived_after_the_execution_deadline"),
           7,
         )
       task.state = parser.rejected ? "not_started" : "completed"
@@ -572,7 +596,7 @@ export class Executor {
           ? error
           : new BridgeError(
               "LOCAL_IO_ERROR",
-              "Local execution coordination failed",
+              msg("error.local_execution_coordination_failed"),
             )
       task.state = sent ? "unknown" : "not_started"
       task.exitCode = null
@@ -593,7 +617,9 @@ export class Executor {
       } catch {
         throw new BridgeError(
           "STATE_ERROR",
-          "Cannot persist execution outcome; the durable dispatch claim remains unresolved",
+          msg(
+            "error.cannot_persist_execution_outcome_the_durable_dispatch_claim_remains_unresolved",
+          ),
           8,
           false,
           sent ? "unknown" : "not_started",
@@ -653,9 +679,7 @@ export function taskResult(binding: Binding, task: Task) {
       ? null
       : {
           code,
-          message: completed
-            ? "Remote command exited with a nonzero status"
-            : "Request did not reach a confirmed completion; inspect its recorded state",
+          message: completed ? msg("result.nonzero") : msg("result.incomplete"),
           retryable: false,
         },
   }

@@ -2,6 +2,7 @@ import { constants } from "node:fs"
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { accessDenied, BridgeError, hasCode, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { parseJson } from "./validate.ts"
 
 export async function secureDirectory(path: string): Promise<string> {
@@ -13,7 +14,9 @@ export async function secureDirectory(path: string): Promise<string> {
       stat.uid === process.getuid?.() &&
       (stat.mode & 0o077) === 0,
     "UNSAFE_PATH",
-    "State directory must be owned by the current user with mode 0700",
+    msg(
+      "error.state_directory_must_be_owned_by_the_current_user_with_mode_0700",
+    ),
     8,
   )
   const canonical = await realpath(path)
@@ -49,7 +52,7 @@ export async function readJsonSecure(
         (stat.mode & 0o077) === 0 &&
         stat.size <= maxBytes,
       "UNSAFE_PATH",
-      "State file ownership, permissions or size is invalid",
+      msg("error.state_file_ownership_permissions_or_size_is_invalid"),
       8,
     )
     const buffer = Buffer.alloc(maxBytes + 1)
@@ -57,7 +60,7 @@ export async function readJsonSecure(
     requireValue(
       bytesRead <= maxBytes,
       "STATE_ERROR",
-      "State file is too large",
+      msg("error.state_file_is_too_large"),
       8,
     )
     return parseJson(
@@ -103,7 +106,7 @@ export async function checkExistingFile(path: string): Promise<void> {
         stat.uid === process.getuid?.() &&
         (stat.mode & 0o077) === 0,
       "UNSAFE_PATH",
-      "State file is not a private regular file",
+      msg("error.state_file_is_not_a_private_regular_file"),
       8,
     )
   } catch (error) {
@@ -124,7 +127,9 @@ export function validateRawInput(text: string, limit: number): void {
   requireValue(
     Buffer.byteLength(text) <= limit && !forbidden,
     "INVALID_INPUT",
-    "Raw input contains control characters or exceeds the input limit",
+    msg(
+      "error.raw_input_contains_control_characters_or_exceeds_the_input_limit",
+    ),
   )
 }
 
@@ -133,8 +138,13 @@ export function privatePathError(error: unknown): BridgeError {
   if (accessDenied(error))
     return new BridgeError(
       "LOCAL_ACCESS_DENIED",
-      "Cannot access private Bridge state; grant the selected state directory access",
+      msg(
+        "error.cannot_access_private_bridge_state_grant_the_selected_state_directory_access",
+      ),
       5,
     )
-  return new BridgeError("STATE_ERROR", "Cannot access private Bridge state")
+  return new BridgeError(
+    "STATE_ERROR",
+    msg("error.cannot_access_private_bridge_state"),
+  )
 }

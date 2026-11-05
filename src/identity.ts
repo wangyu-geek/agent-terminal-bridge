@@ -6,6 +6,7 @@ import {
   deniedDiagnostic,
   hasCode,
 } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { runProcess } from "./process.ts"
 
 export async function processIdentity(pid: number): Promise<string> {
@@ -21,14 +22,18 @@ export async function processIdentity(pid: number): Promise<string> {
       if (accessDenied(error))
         throw new BridgeError(
           "LOCAL_ACCESS_DENIED",
-          "Cannot inspect local process identity",
+          msg("error.cannot_inspect_local_process_identity"),
           5,
         )
       if (hasCode(error, "ENOENT"))
-        throw new BridgeError("PROCESS_MISSING", "Process has exited", 4)
+        throw new BridgeError(
+          "PROCESS_MISSING",
+          msg("error.process_has_exited"),
+          4,
+        )
       throw new BridgeError(
         "PROCESS_IDENTITY_UNKNOWN",
-        "Cannot verify process creation identity",
+        msg("error.cannot_verify_process_creation_identity"),
         8,
       )
     }
@@ -40,15 +45,17 @@ export async function processIdentity(pid: number): Promise<string> {
   if (deniedDiagnostic(result.stderr))
     throw new BridgeError(
       "LOCAL_ACCESS_DENIED",
-      "Cannot run local process identity inspection; grant process inspection access",
+      msg(
+        "error.cannot_run_local_process_identity_inspection_grant_process_inspection_access",
+      ),
       5,
     )
   if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim())
-    throw new BridgeError("PROCESS_MISSING", "Process has exited", 4)
+    throw new BridgeError("PROCESS_MISSING", msg("error.process_has_exited"), 4)
   if (result.exitCode !== 0 || !result.stdout.trim())
     throw new BridgeError(
       "PROCESS_IDENTITY_UNKNOWN",
-      "Cannot verify local process identity",
+      msg("error.cannot_verify_local_process_identity"),
       8,
     )
   return `${await bootIdentity()}:${pid}:${result.stdout.trim()}`
@@ -70,7 +77,7 @@ async function readBoot(): Promise<string> {
   }
   throw new BridgeError(
     "UNSUPPORTED_PLATFORM",
-    "Only macOS and Linux process identity is supported",
+    msg("error.only_macos_and_linux_process_identity_is_supported"),
     3,
   )
 }

@@ -1,4 +1,5 @@
 import { BridgeError } from "./errors.ts"
+import { msg } from "./i18n.ts"
 
 export class TerminalRenderer {
   private readonly decoder = new TextDecoder()
@@ -176,14 +177,14 @@ export class FrameParser {
         if (this.pending.length > 8192)
           throw new BridgeError(
             "PROTOCOL_ERROR",
-            "Execution frame exceeds its limit",
+            msg("error.execution_frame_exceeds_its_limit"),
           )
         return
       }
       if (end > 8192)
         throw new BridgeError(
           "PROTOCOL_ERROR",
-          "Execution frame exceeds its limit",
+          msg("error.execution_frame_exceeds_its_limit"),
         )
       const raw = this.pending.subarray(0, end + 1)
       this.pending = this.pending.subarray(end + 1)
@@ -199,7 +200,7 @@ export class FrameParser {
       if (this.ended || this.rejected)
         throw new BridgeError(
           "PROTOCOL_ERROR",
-          "Duplicate execution completion frame",
+          msg("error.duplicate_execution_completion_frame"),
         )
       const type = frame[3]
       if (this.kind === "install" && type === "ACK" && frame.length === 4) {
@@ -226,7 +227,7 @@ export class FrameParser {
         if (!Number.isInteger(major) || major < 3)
           throw new BridgeError(
             "PROTOCOL_ERROR",
-            "Unsupported shell profile response",
+            msg("error.unsupported_shell_profile_response"),
           )
         const version = frame[8] ?? null
         if (version !== null) {
@@ -238,12 +239,12 @@ export class FrameParser {
           )
             throw new BridgeError(
               "PROTOCOL_ERROR",
-              "Unsupported or inconsistent Bash version",
+              msg("error.unsupported_or_inconsistent_bash_version"),
             )
         } else if (major === 3)
           throw new BridgeError(
             "PROTOCOL_ERROR",
-            "Bash 3 requires a verified minor version",
+            msg("error.bash_3_requires_a_verified_minor_version"),
           )
         this.probe = {
           host: decodeField(frame[4] ?? "", 255),
@@ -283,7 +284,7 @@ export class FrameParser {
       }
       throw new BridgeError(
         "PROTOCOL_ERROR",
-        "Malformed or out-of-order execution frame",
+        msg("error.malformed_or_out_of_order_execution_frame"),
       )
     }
   }
@@ -300,10 +301,16 @@ export class FrameParser {
 function decodeField(value: string, limit: number): string {
   const bytes = Buffer.from(value, "base64")
   if (!value || bytes.length > limit || bytes.toString("base64") !== value)
-    throw new BridgeError("PROTOCOL_ERROR", "Invalid encoded shell metadata")
+    throw new BridgeError(
+      "PROTOCOL_ERROR",
+      msg("error.invalid_encoded_shell_metadata"),
+    )
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
   } catch {
-    throw new BridgeError("PROTOCOL_ERROR", "Shell metadata is not UTF-8")
+    throw new BridgeError(
+      "PROTOCOL_ERROR",
+      msg("error.shell_metadata_is_not_utf_8"),
+    )
   }
 }

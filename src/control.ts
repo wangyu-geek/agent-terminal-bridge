@@ -1,4 +1,5 @@
 import { BridgeError, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import type { Binding } from "./models.ts"
 
 type ControlScope = Pick<Binding, "socketPath" | "sessionId" | "paneId"> &
@@ -64,7 +65,7 @@ export class ControlClient {
     requireValue(
       performance.now() < deadline,
       "TIMEOUT",
-      "Control deadline expired before connection",
+      msg("error.control_deadline_expired_before_connection"),
       7,
     )
     const client = new ControlClient(binding, onOutput, onEvent, receiveOutput)
@@ -85,7 +86,7 @@ export class ControlClient {
       requireValue(
         reply.join("") === `ATB_ID ${identity}`,
         "BINDING_CHANGED",
-        "Control stream attached to an unexpected pane",
+        msg("error.control_stream_attached_to_an_unexpected_pane"),
         4,
       )
       client.armed = true
@@ -100,14 +101,14 @@ export class ControlClient {
     requireValue(
       performance.now() < deadline,
       "TIMEOUT",
-      "Control deadline expired before input",
+      msg("error.control_deadline_expired_before_input"),
       7,
     )
     if (this.failure) throw this.failure
     requireValue(
       !this.reply && !this.closed,
       "PROTOCOL_ERROR",
-      "Control client is unavailable",
+      msg("error.control_client_is_unavailable"),
     )
     const response = new Promise<string[]>((resolve, reject) => {
       this.reply = { resolve, reject }
@@ -171,7 +172,7 @@ export class ControlClient {
         if (this.pending.length > 262144)
           throw new BridgeError(
             "PROTOCOL_ERROR",
-            "Control message exceeds its buffer limit",
+            msg("error.control_message_exceeds_its_buffer_limit"),
           )
       }
       await Promise.all([this.proc.exited, stderr])
@@ -179,7 +180,7 @@ export class ControlClient {
       if (!this.stopping)
         throw new BridgeError(
           "CONNECTION_LOST",
-          "Control stream closed before completion",
+          msg("error.control_stream_closed_before_completion"),
         )
     } catch (error) {
       this.fail(error)
@@ -190,7 +191,7 @@ export class ControlClient {
     requireValue(
       raw.length <= 262144,
       "PROTOCOL_ERROR",
-      "Control message exceeds its buffer limit",
+      msg("error.control_message_exceeds_its_buffer_limit"),
     )
     const line = raw.toString("utf8").replace(/\r$/, "")
     if (line.startsWith("%output ")) {
@@ -222,7 +223,10 @@ export class ControlClient {
       const reply = this.reply
       this.reply = null
       reply?.reject(
-        new BridgeError("PROTOCOL_ERROR", "tmux rejected a control command"),
+        new BridgeError(
+          "PROTOCOL_ERROR",
+          msg("error.tmux_rejected_a_control_command"),
+        ),
       )
       return
     }
@@ -256,13 +260,16 @@ export class ControlClient {
     }
     if (line) this.lines.push(line)
     if (this.lines.length > 128)
-      throw new BridgeError("PROTOCOL_ERROR", "Control reply exceeds its limit")
+      throw new BridgeError(
+        "PROTOCOL_ERROR",
+        msg("error.control_reply_exceeds_its_limit"),
+      )
   }
   private fail(error: unknown): void {
     this.failure =
       error instanceof Error
         ? error
-        : new BridgeError("PROTOCOL_ERROR", "Control stream failed")
+        : new BridgeError("PROTOCOL_ERROR", msg("error.control_stream_failed"))
     this.readyReject?.(this.failure)
     this.reply?.reject(this.failure)
     this.reply = null
@@ -278,7 +285,7 @@ export class ControlClient {
               reject(
                 new BridgeError(
                   "TIMEOUT",
-                  "Control operation exceeded its deadline",
+                  msg("error.control_operation_exceeded_its_deadline"),
                   7,
                 ),
               ),
@@ -300,7 +307,10 @@ export function decodeTmuxBytes(text: Uint8Array): Uint8Array {
         "ascii",
       )
       if (!/^[0-7]{3}$/.test(octal) || Number.parseInt(octal, 8) > 255)
-        throw new BridgeError("PROTOCOL_ERROR", "Invalid tmux output escape")
+        throw new BridgeError(
+          "PROTOCOL_ERROR",
+          msg("error.invalid_tmux_output_escape"),
+        )
       bytes.push(Number.parseInt(octal, 8))
       index += 4
     } else {

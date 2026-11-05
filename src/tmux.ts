@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { ControlClient } from "./control.ts"
 import { BridgeError, deniedDiagnostic, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import type { Binding, Pane } from "./models.ts"
 import { runProcess } from "./process.ts"
 
@@ -53,7 +54,9 @@ export class Tmux {
       if (deniedDiagnostic(result.stderr))
         throw new BridgeError(
           "LOCAL_ACCESS_DENIED",
-          "Cannot access the local tmux socket; grant its Unix socket access",
+          msg(
+            "error.cannot_access_the_local_tmux_socket_grant_its_unix_socket_access",
+          ),
           5,
         )
       if (
@@ -63,12 +66,12 @@ export class Tmux {
       )
         throw new BridgeError(
           "TMUX_OBJECT_MISSING",
-          "The selected tmux object is missing",
+          msg("error.the_selected_tmux_object_is_missing"),
           4,
         )
       throw new BridgeError(
         "TMUX_ERROR",
-        "tmux operation failed; inspect session state",
+        msg("error.tmux_operation_failed_inspect_session_state"),
         8,
       )
     }
@@ -83,7 +86,7 @@ export class Tmux {
     requireValue(
       fields.length === 12,
       "PROTOCOL_ERROR",
-      "Invalid tmux metadata",
+      msg("error.invalid_tmux_metadata"),
       8,
     )
     const num = (index: number) => {
@@ -93,7 +96,7 @@ export class Tmux {
       requireValue(
         /^\d+$/.test(value),
         "PROTOCOL_ERROR",
-        "Invalid numeric tmux metadata",
+        msg("error.invalid_numeric_tmux_metadata"),
         8,
       )
       return Number(value)
@@ -106,7 +109,7 @@ export class Tmux {
         /^@\d+$/.test(windowId) &&
         /^%\d+$/.test(paneId),
       "PROTOCOL_ERROR",
-      "Invalid tmux object identity",
+      msg("error.invalid_tmux_object_identity"),
       8,
     )
     return {
@@ -132,7 +135,7 @@ export class Tmux {
       requireValue(
         /^[a-f0-9]{32}$/.test(value),
         "BINDING_CHANGED",
-        "tmux server marker is invalid",
+        msg("error.tmux_server_marker_is_invalid"),
         4,
       )
       return value
@@ -176,7 +179,7 @@ export class Tmux {
             /^\d+$/.test(pid ?? "") &&
             /^\d+$/.test(created ?? ""),
           "PROTOCOL_ERROR",
-          "Invalid tmux client metadata",
+          msg("error.invalid_tmux_client_metadata"),
           8,
         )
         return {
@@ -221,7 +224,7 @@ export class Tmux {
     requireValue(
       !after || after.readonly === value,
       "PROTOCOL_ERROR",
-      "Client read-only transition was not applied",
+      msg("error.client_read_only_transition_was_not_applied"),
     )
   }
   async sendBytes(
@@ -299,7 +302,7 @@ export class Tmux {
       requireValue(
         parts,
         "PROTOCOL_ERROR",
-        "Invalid terminal cursor metadata",
+        msg("error.invalid_terminal_cursor_metadata"),
         8,
       )
       const row = Number(parts[1])
@@ -307,7 +310,7 @@ export class Tmux {
       requireValue(
         row < 10000 && column < 10000,
         "PROTOCOL_ERROR",
-        "Terminal cursor exceeds view limits",
+        msg("error.terminal_cursor_exceeds_view_limits"),
         8,
       )
       const text = await this.run([
@@ -351,7 +354,7 @@ export async function canonicalSocket(path: string): Promise<string> {
         !stat.isSymbolicLink() &&
         stat.uid === process.getuid?.(),
       "INVALID_BINDING",
-      "Socket is not owned by the current user",
+      msg("error.socket_is_not_owned_by_the_current_user"),
       4,
     )
     // Bun 1.4.2 on macOS cannot realpath a Unix socket itself (EOPNOTSUPP).
@@ -359,7 +362,7 @@ export async function canonicalSocket(path: string): Promise<string> {
   } catch {
     throw new BridgeError(
       "INVALID_BINDING",
-      "tmux socket is missing or unsafe",
+      msg("error.tmux_socket_is_missing_or_unsafe"),
       4,
     )
   }
@@ -372,7 +375,7 @@ export async function checkTmux(minimum = "3.2") {
   requireValue(
     version && required,
     "DEPENDENCY_MISSING",
-    "Cannot determine tmux version",
+    msg("error.cannot_determine_tmux_version"),
     3,
   )
   const actualMajor = Number(version[1])
@@ -385,7 +388,7 @@ export async function checkTmux(minimum = "3.2") {
             (version[3]?.codePointAt(0) ?? 0) >=
               (required[3]?.codePointAt(0) ?? 0)))),
     "DEPENDENCY_MISSING",
-    `tmux >=${minimum} is required`,
+    msg("error.tmux_is_required", { minimum }),
     3,
   )
   const commands = await runProcess([
@@ -406,14 +409,14 @@ export async function checkTmux(minimum = "3.2") {
     requireValue(
       commands.stdout.includes(`${name} `),
       "UNSUPPORTED_CAPABILITY",
-      "Required tmux command is missing",
+      msg("error.required_tmux_command_is_missing"),
       3,
     )
   }
   requireValue(
     /send-keys.*\[[^\]]*H/.test(commands.stdout),
     "UNSUPPORTED_CAPABILITY",
-    "tmux hexadecimal input is required",
+    msg("error.tmux_hexadecimal_input_is_required"),
     3,
   )
   return {

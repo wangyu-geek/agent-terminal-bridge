@@ -1,5 +1,6 @@
 import { join } from "node:path"
 import { BridgeError, hasCode, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { processIdentity } from "./identity.ts"
 import { digest } from "./locking.ts"
 import type { Binding } from "./models.ts"
@@ -75,12 +76,15 @@ export class Tasks {
       requireValue(
         task.bindingId === binding.id && task.id === id,
         "STATE_ERROR",
-        "Request identity does not match its file",
+        msg("error.request_identity_does_not_match_its_file"),
         8,
       )
       return task
     } catch {
-      throw new BridgeError("STATE_ERROR", "Request record is invalid")
+      throw new BridgeError(
+        "STATE_ERROR",
+        msg("error.request_record_is_invalid"),
+      )
     }
   }
   async save(binding: Binding, task: Task): Promise<void> {
@@ -107,7 +111,7 @@ export class Tasks {
         Array.isArray(data.ids) &&
         data.ids.length <= 20,
       "STATE_ERROR",
-      "Recent request index is invalid",
+      msg("error.recent_request_index_is_invalid"),
       8,
     )
     return data.ids.map((id) => requestId(string(id, "recent request ID", 128)))
@@ -116,7 +120,12 @@ export class Tasks {
     const result: Task[] = []
     for (const id of await this.recentIds(binding)) {
       const task = await this.get(binding, id)
-      requireValue(task, "STATE_ERROR", "Recent request record is missing", 8)
+      requireValue(
+        task,
+        "STATE_ERROR",
+        msg("error.recent_request_record_is_missing"),
+        8,
+      )
       result.push(await this.observe(task))
     }
     return result
@@ -147,16 +156,24 @@ export class Tasks {
       requireValue(
         data.bindingId === binding.id,
         "STATE_ERROR",
-        "Active request binding mismatch",
+        msg("error.active_request_binding_mismatch"),
         8,
       )
       if (data.requestId === null) return null
       const id = requestId(string(data.requestId, "active request ID", 128))
       const task = await this.get(binding, id)
-      requireValue(task, "STATE_ERROR", "Active request record is missing", 8)
+      requireValue(
+        task,
+        "STATE_ERROR",
+        msg("error.active_request_record_is_missing"),
+        8,
+      )
       return task
     } catch {
-      throw new BridgeError("STATE_ERROR", "Active request state is invalid")
+      throw new BridgeError(
+        "STATE_ERROR",
+        msg("error.active_request_state_is_invalid"),
+      )
     }
   }
   async requireIdle(binding: Binding): Promise<void> {
@@ -165,7 +182,7 @@ export class Tasks {
     if (observed && isPending(observed))
       throw new BridgeError(
         observed.state === "unknown" ? "RECOVERY_REQUIRED" : "BUSY",
-        "An unresolved request prevents automatic input",
+        msg("error.an_unresolved_request_prevents_automatic_input"),
         observed.state === "unknown" ? 9 : 6,
       )
   }
@@ -182,7 +199,10 @@ export class Tasks {
         type: choice(data.type, ["interrupt", "takeover"], "control operation"),
       }
     } catch {
-      throw new BridgeError("STATE_ERROR", "Control request state is invalid")
+      throw new BridgeError(
+        "STATE_ERROR",
+        msg("error.control_request_state_is_invalid"),
+      )
     }
   }
   async saveControl(binding: Binding, value: ControlRequest): Promise<void> {
@@ -195,7 +215,10 @@ async function optionalJson(path: string): Promise<unknown | null> {
     return await readJsonSecure(path)
   } catch (error) {
     if (hasCode(error, "ENOENT")) return null
-    throw new BridgeError("STATE_ERROR", "Cannot read durable request state")
+    throw new BridgeError(
+      "STATE_ERROR",
+      msg("error.cannot_read_durable_request_state"),
+    )
   }
 }
 
@@ -227,7 +250,7 @@ function parseTask(value: unknown): Task {
   requireValue(
     data.schemaVersion === 1,
     "STATE_ERROR",
-    "Unsupported request schema",
+    msg("error.unsupported_request_schema"),
     8,
   )
   const nonce = string(data.nonce, "nonce", 32)
@@ -235,7 +258,7 @@ function parseTask(value: unknown): Task {
   requireValue(
     /^[a-f0-9]{32}$/.test(nonce) && /^[a-f0-9]{64}$/.test(fingerprint),
     "STATE_ERROR",
-    "Invalid request identifiers",
+    msg("error.invalid_request_identifiers"),
     8,
   )
   return {

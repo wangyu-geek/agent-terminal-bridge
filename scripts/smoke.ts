@@ -20,6 +20,10 @@ for (const artifact of [
 ]) {
   const f = await Fixture.create()
   try {
+    await chmod(
+      join(f.directory, "config/agent-terminal-bridge/config.json"),
+      0o644,
+    )
     const directory = join(f.directory, "artifact with spaces")
     await mkdir(directory, { mode: 0o700 })
     const binary = await prepareArtifact(artifact, directory, f, packagePath)
@@ -71,6 +75,27 @@ for (const artifact of [
       assert.equal(value.schema_version, 1)
       return value
     }
+    const help = Bun.spawn([binary, "--help", "--lang", "zh-CN"], {
+      cwd: directory,
+      env: f.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [helpCode, helpText, helpError] = await Promise.all([
+      help.exited,
+      new Response(help.stdout).text(),
+      new Response(help.stderr).text(),
+    ])
+    assert.equal(helpCode, 0, helpError)
+    assert(
+      helpText.includes("你与 Agent 的共享终端"),
+      `${artifact}: embedded Chinese catalog`,
+    )
+    assert.deepEqual(
+      await call(["capabilities", "--lang", "zh-CN"]),
+      await call(["capabilities", "--lang", "en"]),
+    )
     assert.equal(
       (await call(["capabilities"])).requires_multimodal_model,
       false,
@@ -123,7 +148,7 @@ for (const artifact of [
     await call(["stop", "--session-id", ssh.id, "--confirm"])
     await call(["stop", "--confirm"])
     console.log(
-      `${artifact}: isolated startup, embedded helper, execution and default SSH locale cleanup passed`,
+      `${artifact}: isolated startup, embedded languages/helper, execution and default SSH locale cleanup passed`,
     )
   } finally {
     await f.cleanup()

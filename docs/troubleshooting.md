@@ -14,7 +14,20 @@ Start with `capabilities --json`, `doctor --json`, then `status --session NAME -
 | TIMEOUT / CONNECTION_LOST | Query the request. The remote command may continue; take over manually and inspect it |
 | Unsupported multi-pane execution | Use a dedicated single-pane session. Do not read other panes as a workaround |
 | OUTPUT_LIMIT from capture | Ask for fewer snapshot lines; the local read limit prevents unbounded allocation |
-| Invalid configuration/state | Fix private file permissions or inspect a damaged record while all writers are stopped. Do not discard unresolved claims |
+| Invalid configuration | Check JSON, ownership and whether another user can write the file. Standard 0644 is supported |
+| Invalid private state | Fix private file permissions or inspect a damaged record while all writers are stopped. Do not discard unresolved claims |
+
+## Configuration file permissions
+
+Ordinary user configuration supports standard 0644 permissions as well as private 0600 permissions. Create and save your JSON file, then use Bridge directly. You can check the configuration without starting SSH:
+
+```bash
+remote-terminal capabilities --json
+```
+
+Older builds rejected 0644 configurations with a private-file error; update the binary to use the current rule. The file must be a regular file owned by the current user, without symbolic links or group/other write permission. For a file you own that is unexpectedly group/other writable, remove those write bits with `chmod go-w` on the reported path. Bridge reads the file without changing its permissions. Session state files still require private permissions.
+
+Use the actual path when `XDG_CONFIG_HOME` or `--config PATH` selects a different file. A missing explicitly selected file and an oversized configuration have separate diagnostics. Language stored inside an unreadable/rejected configuration cannot be used; add `--lang zh-CN` to select Chinese for the error message.
 
 ## Local access and names
 
@@ -23,6 +36,8 @@ connect SSH_ALIAS returns to a unique live connection for that SSH entry. --new 
 LOCAL_ACCESS_DENIED (exit 5) with binding unverified means local access is blocked. Run doctor for the exact ID and review state read/write, socket and process checks. Never reconnect or delete a binding solely on this error. [Sandbox access](sandbox-access.md) explains command-level authorization and the limits of the shared socket.
 
 ## Terminal interaction
+
+The text view suppresses standard cursor-position queries (`ESC [ 6 n`) that tmux has already answered. Older views forwarded the query to the outer terminal as well, allowing a second cursor report to enter the remote program's input. This is reproduced with an answering terminal emulator and real local tmux, but does not establish the cause of every bastion disconnect. Update and reopen the viewer to apply this fix; a running viewer does not hot-update. Other terminal-query variants are not covered by this specific fix.
 
 If login prints `'tmux-256color': unknown terminal type.`, the remote environment does not recognize the terminal type inherited from an older Bridge pane. Current managed panes explicitly use `screen-256color`, including when the private tmux server was already running. Update the executable, detach the old view, then run `remote-terminal connect bastion --new` and authenticate manually. Replace `bastion` with your SSH alias. Existing panes and externally bound terminals are unchanged; restarting only the viewer cannot change an SSH PTY's terminal type. Do not stop unrelated sessions or change global tmux settings to apply this fix.
 

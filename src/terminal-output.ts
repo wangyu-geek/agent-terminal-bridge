@@ -1,3 +1,4 @@
+import { createI18n, type I18n } from "./i18n.ts"
 import { sanitizeText } from "./output.ts"
 import { TerminalRenderer } from "./protocol.ts"
 
@@ -10,6 +11,7 @@ export class TerminalOutput {
   constructor(
     readonly nonce: string,
     readonly write: (text: string) => void,
+    readonly i18n: I18n = createI18n("en"),
   ) {}
 
   feed(chunk: Uint8Array): void {
@@ -63,7 +65,9 @@ export class TerminalOutput {
         const command = Buffer.from(encoded, "base64")
         if (command.length <= 2048 && command.toString("base64") === encoded)
           this.write(
-            `\n[Agent command]\n$ ${sanitizeText(command.toString("utf8"))}\n`,
+            this.i18n.t("view.command", {
+              command: sanitizeText(command.toString("utf8")),
+            }),
           )
       } else if (
         frame[0] === "ATB1" &&
@@ -82,7 +86,7 @@ export class TerminalOutput {
         Number(frame[4]) <= 255
       ) {
         this.write(this.renderer.finish())
-        this.write(`\n[Shell reported exit ${frame[4]}]\n`)
+        this.write(this.i18n.t("view.exit", { exit: frame[4] ?? "" }))
         this.request = null
       } else if (this.request) this.body(raw)
     }
@@ -97,15 +101,24 @@ export class TerminalOutput {
   }
 }
 
-// Preserve login/TUI bytes, but hide late protocol completions after takeover.
+// Preserve login/TUI bytes, except queries already answered by tmux and late
+// protocol completions after takeover.
 export class HumanTerminalOutput {
   private pending = Buffer.alloc(0)
   constructor(readonly write: (bytes: Uint8Array) => void) {}
   feed(chunk: Uint8Array): void {
     this.pending = Buffer.concat([this.pending, chunk])
     const prefixes = [Buffer.from("\x1eATB1|"), Buffer.from("\x1eATBV1|")]
+    const cursorQuery = Buffer.from("\x1b[6n")
     while (this.pending.length) {
-      const start = this.pending.indexOf(0x1e)
+      const frameStart = this.pending.indexOf(0x1e)
+      const escapeStart = this.pending.indexOf(0x1b)
+      const start =
+        frameStart < 0
+          ? escapeStart
+          : escapeStart < 0
+            ? frameStart
+            : Math.min(frameStart, escapeStart)
       if (start < 0) {
         this.write(this.pending)
         this.pending = Buffer.alloc(0)
@@ -114,6 +127,23 @@ export class HumanTerminalOutput {
       if (start > 0) {
         this.write(this.pending.subarray(0, start))
         this.pending = this.pending.subarray(start)
+      }
+      if (this.pending[0] === 0x1b) {
+        const compared = Math.min(cursorQuery.length, this.pending.length)
+        if (
+          this.pending
+            .subarray(0, compared)
+            .equals(cursorQuery.subarray(0, compared))
+        ) {
+          if (this.pending.length < cursorQuery.length) return
+          // The pane PTY already received tmux's CPR. Forwarding this query
+          // makes the outer terminal inject a second reply as human input.
+          this.pending = this.pending.subarray(cursorQuery.length)
+        } else {
+          this.write(this.pending.subarray(0, 1))
+          this.pending = this.pending.subarray(1)
+        }
+        continue
       }
       const matches = prefixes.some((prefix) => {
         const compared = Math.min(prefix.length, this.pending.length)

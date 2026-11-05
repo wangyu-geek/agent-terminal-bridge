@@ -1,3 +1,5 @@
+import type { LanguageSetting } from "./i18n.ts"
+
 export const OPERATIONS = ["read", "raw_send", "exec", "stop"] as const
 export type Operation = (typeof OPERATIONS)[number]
 export type Control = "human" | "agent" | "recovery_required"
@@ -72,6 +74,7 @@ export interface Pane {
 }
 
 export interface Config {
+  language: LanguageSetting
   session: string
   captureLines: number
   timeoutSeconds: number

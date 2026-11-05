@@ -17,6 +17,8 @@ async function fakeSsh(login = false) {
   const bash = await compatibleBash()
   if (!bash) throw new Error("Bash >=3.2 is required for this fixture")
   fixture.env.ATB_FIXTURE_BASH = bash
+  fixture.env.DISPLAY = ":fixture"
+  fixture.env.WAYLAND_DISPLAY = undefined
   await unlink(
     join(fixture.directory, "config/agent-terminal-bridge/config.json"),
   )
@@ -39,6 +41,36 @@ async function fakeSsh(login = false) {
   )
   return fixture
 }
+
+integration(
+  "clipboard failure leaves connect usable and displays the ID for manual copying",
+  async () => {
+    const fixture = await fakeSsh()
+    for (const tool of ["pbcopy", "wl-copy", "xclip", "xsel"])
+      await Bun.write(
+        join(fixture.directory, "clipboard-bin", tool),
+        "#!/bin/sh\nprintf 'clipboard-private-error' >&2\nexit 1\n",
+      )
+    const owner = terminal(fixture, ["connect", "bastion-example"])
+    try {
+      await until(async () => owner.output().includes("[You control input]"))
+      const binding = await fixture.binding("bastion-example")
+      fixture.sockets.add(binding.socketPath)
+      expect(owner.output()).toContain(
+        `Clipboard unavailable; copy manually: session_id=${binding.id}`,
+      )
+      expect(owner.output()).not.toContain("clipboard-private-error")
+      await fixture.humanRoundTrip(
+        owner.process.terminal,
+        owner.output,
+        binding.alias,
+      )
+    } finally {
+      await close(owner)
+    }
+  },
+  15000,
+)
 
 for (const existingServer of [false, true]) {
   integration(
@@ -173,6 +205,9 @@ integration(
           (client) => client.control,
         ),
       )
+      expect(await Bun.file(join(fixture.directory, "clipboard")).text()).toBe(
+        `session_id=${second.id}`,
+      )
       expect(
         (await new Tmux(first.socketPath).clients(first.sessionId)).length,
       ).toBe(0)
@@ -233,6 +268,42 @@ integration(
   20000,
 )
 
+integration(
+  "Chinese management confirmation preserves the explicit y/N authorization boundary",
+  async () => {
+    const fixture = await fakeSsh()
+    expect((await fixture.cli(["start", "--json"])).code).toBe(0)
+    const binding = await fixture.binding()
+    const args = [
+      "handoff",
+      "--session-id",
+      binding.id,
+      "--to",
+      "human",
+      "--lang",
+      "zh-CN",
+    ]
+    for (const [answer, expected] of [
+      ["是", 5],
+      ["y", 0],
+    ] as const) {
+      const owner = terminal(fixture, args)
+      try {
+        await until(async () => owner.output().includes("[y/N]"))
+        expect(owner.output()).toContain("请确认 shell 输入行为空")
+        owner.process.terminal?.write(`${answer}\r`)
+        expect(await owner.process.exited).toBe(expected)
+        if (expected === 5) expect(owner.output()).toContain("操作未获确认")
+      } finally {
+        await close(owner)
+      }
+    }
+    expect((await fixture.binding()).id).toBe(binding.id)
+    expect((await fixture.binding()).control).toBe("human")
+  },
+  15000,
+)
+
 function terminal(fixture: Fixture, args: string[]) {
   let output = ""
   const process = Bun.spawn(
@@ -241,6 +312,8 @@ function terminal(fixture: Fixture, args: string[]) {
       "--no-env-file",
       "--config=/dev/null",
       join(root, "src/cli.ts"),
+      "--lang",
+      "en",
       ...args,
     ],
     {
@@ -512,6 +585,9 @@ integration(
       )
       const old = await fixture.binding()
       fixture.sockets.add(old.socketPath)
+      expect(await Bun.file(join(fixture.directory, "clipboard")).text()).toBe(
+        `session_id=${old.id}`,
+      )
       await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       expect(
         (
@@ -594,6 +670,9 @@ integration(
             .includes("[You control input]") &&
           owner.output().slice(reconnectStart).includes("fixture-ready>"),
       )
+      expect(await Bun.file(join(fixture.directory, "clipboard")).text()).toBe(
+        `session_id=${nextId}`,
+      )
       owner.process.terminal?.write("printf 'reconnected-manual-input\\n'\r")
       await fixture.untilCapture(
         (output) => output.split("\n").includes("reconnected-manual-input"),
@@ -645,6 +724,9 @@ integration(
     ])
     expect(result.code).toBe(5)
     expect(result.stderr).toContain("real terminal")
+    expect(await Bun.file(join(fixture.directory, "clipboard")).exists()).toBe(
+      false,
+    )
     expect((await fixture.cli(["list", "--json"])).result.sessions).toEqual([])
     expect(
       await Bun.file(join(fixture.directory, "ssh-arguments")).exists(),
@@ -728,6 +810,12 @@ integration(
           owner.output().includes("[You control input]") &&
           owner.output().includes("fixture-ready> "),
       )
+      expect(owner.output()).toContain(
+        `Copied to clipboard: session_id=${binding.id}`,
+      )
+      expect(await Bun.file(join(fixture.directory, "clipboard")).text()).toBe(
+        `session_id=${binding.id}`,
+      )
       await fixture.humanRoundTrip(owner.process.terminal, owner.output)
       const prepared = await fixture.cli([
         "ready",
@@ -798,6 +886,7 @@ integration(
         (await fixture.cli(["status", "--session-id", binding.id, "--json"]))
           .result.binding,
       ).toBe("valid")
+      await Bun.write(join(fixture.directory, "clipboard"), "other content")
       const observer = terminal(fixture, [
         "connect",
         "--session-id",
@@ -805,9 +894,14 @@ integration(
       ])
       try {
         await until(async () =>
-          (await tmux.clients(binding.sessionId)).some((item) => item.control),
+          observer
+            .output()
+            .includes(`Copied to clipboard: session_id=${binding.id}`),
         )
         expect(observer.output()).toContain(binding.id)
+        expect(
+          await Bun.file(join(fixture.directory, "clipboard")).text(),
+        ).toBe(`session_id=${binding.id}`)
       } finally {
         await close(observer)
       }

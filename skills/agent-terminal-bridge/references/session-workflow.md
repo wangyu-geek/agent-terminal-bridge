@@ -47,6 +47,17 @@ remote-terminal ready --session-id SESSION_ID --confirm --json
 
 Check the status for a valid binding, exec permission, and unresolved requests. If the session is archived, query requests only for the original ID. If it is unverified/access_denied, run `doctor` and use the host's permission mechanism to authorize the local resources required by this Bridge invocation; do not treat it as a disconnection. If there are existing unknown/preparation-failed requests, follow the human-handling workflow instead of continuing to `ready`. The single `ready` transaction freezes human input, installs a temporary entry point, verifies a fresh handshake, and commits control. The Agent must not split these steps.
 
+`awaiting_human` / `next_action.action=confirm_ready` is the normal state before preparation, including after successful manual login. Status does not check login or receive chat confirmations. Resolve its next step from the conversation:
+
+| Conversation and status | Next step |
+|---|---|
+| The user has confirmed login/target selection and handed over the selected idle shell; status is `awaiting_human` | Call `ready --session-id SESSION_ID --confirm --json` without asking again |
+| Only an ID was provided, with no login/handoff confirmation | Ask once whether the selected target shell is idle and can be handed over; after confirmation call `ready` |
+| The handoff was earlier in this conversation and the selected session is unchanged | Use that handoff; a new chat turn alone does not require confirmation again |
+| The user took over, changed the target or reconnected, or the outcome became unknown | Follow the relevant new-login or human-recovery workflow and obtain the new handoff |
+
+`next_action.requires_confirmation=true` describes the prerequisite for the management action. The user's applicable conversation confirmation satisfies it; it does not require an additional question or a status change before `ready`. Never wait for manual login alone to change `awaiting_human` to `ready`.
+
 Submit work only after `ready` explicitly succeeds with `ready=true` and the current status allows execution. Target details are reported by the shell itself; session_id confirms the shared-session object, not the identity of the remote machine. If the user explicitly requests a host check, add `--expected-host HOSTNAME` to `ready`/`resume`. This option is not required in the normal workflow.
 
 ## Execute and query

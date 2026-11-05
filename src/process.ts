@@ -1,4 +1,5 @@
 import { accessDenied, BridgeError, hasCode } from "./errors.ts"
+import { msg } from "./i18n.ts"
 
 export async function runProcess(
   cmd: string[],
@@ -23,12 +24,14 @@ export async function runProcess(
     if (accessDenied(error))
       throw new BridgeError(
         "LOCAL_ACCESS_DENIED",
-        "Permission denied starting a required local program; inspect doctor local_access",
+        msg(
+          "error.permission_denied_starting_a_required_local_program_inspect_doctor_local_access",
+        ),
         5,
       )
     throw new BridgeError(
       hasCode(error, "ENOENT") ? "DEPENDENCY_MISSING" : "LOCAL_IO_ERROR",
-      "Cannot start required local program",
+      msg("error.cannot_start_required_local_program"),
       3,
     )
   }
@@ -59,13 +62,13 @@ export async function runProcess(
     if (timedOut)
       throw new BridgeError(
         "TIMEOUT",
-        "Local operation exceeded its deadline",
+        msg("error.local_operation_exceeded_its_deadline"),
         7,
       )
     if (overflow)
       throw new BridgeError(
         "OUTPUT_LIMIT",
-        "Local operation exceeded its output limit",
+        msg("error.local_operation_exceeded_its_output_limit"),
         8,
       )
     return { exitCode, stdout, stderr }

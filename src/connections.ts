@@ -1,4 +1,5 @@
 import { BridgeError, requireValue } from "./errors.ts"
+import { msg } from "./i18n.ts"
 import { digest, withLock } from "./locking.ts"
 import type { Binding } from "./models.ts"
 import type { Sessions } from "./session.ts"
@@ -39,7 +40,7 @@ export class Connections {
               requireValue(
                 named.ownership === "managed" && named.sshAlias === options.ssh,
                 "SESSION_CONFLICT",
-                "That name belongs to another or unknown SSH entry; return to it without an SSH argument, or omit --session to create a separate connection",
+                msg("error.connection_entry_conflict"),
                 4,
               )
               const current = await this.inspect(named)
@@ -47,7 +48,9 @@ export class Connections {
                 requireValue(
                   !options.fresh,
                   "SESSION_CONFLICT",
-                  "That name already has a live connection; omit --session with --new to create another",
+                  msg(
+                    "error.that_name_already_has_a_live_connection_omit_session_with_new_to_create_another",
+                  ),
                   4,
                 )
                 return [named]
@@ -99,13 +102,15 @@ export class Connections {
     requireValue(
       current.id === binding.id,
       "BINDING_CHANGED",
-      "The old connection name now identifies another session; select the new ID explicitly",
+      msg(
+        "error.the_old_connection_name_now_identifies_another_session_select_the_new_id_explicitly",
+      ),
       4,
     )
     requireValue(
       binding.ownership === "managed" && binding.sshAlias,
       "INVALID_INPUT",
-      "This session has no managed SSH entry to reconnect",
+      msg("error.this_session_has_no_managed_ssh_entry_to_reconnect"),
       4,
     )
     const result = await this.open({
@@ -116,7 +121,9 @@ export class Connections {
     requireValue(
       selected && selected.id !== binding.id,
       "SESSION_CONFLICT",
-      "The old connection is still live; inspect it before reconnecting",
+      msg(
+        "error.the_old_connection_is_still_live_inspect_it_before_reconnecting",
+      ),
       4,
     )
     return selected

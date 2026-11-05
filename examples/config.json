@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "defaults": {
+    "language": "auto",
     "session": "remote",
     "capture_lines": 200,
     "timeout_seconds": 30,

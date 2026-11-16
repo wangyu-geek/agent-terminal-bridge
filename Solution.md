@@ -161,17 +161,16 @@ flowchart TD
 | doctor | 检查依赖、版本、路径、权限及后端能力 | 1 |
 | capabilities | 返回当前安装版本实际实现的能力 | 1 |
 | connect | 在真实终端创建/选择会话并直接进入 SSH；显示 session_id，不自动认证 | 整改 |
+| session | 列出已登记会话及状态、查询指定会话、停止受管理会话或解除绑定 | 1 |
 | ready | 明确人工交接后自动冻结客户端、传输 helper、握手并提交 Agent 控制权 | 整改 |
 | takeover / resume | 等待实际人工接管；人工处理后登记恢复并重新准备，不重发旧命令 | 整改 |
 | start | 创建受管理 tmux 会话及单一目标 pane | 1 |
-| bind / unbind | 显式登记或撤销一个已有 pane 的绑定 | 1 |
-| list / status | 仅列出和查询 Bridge 已登记会话 | 1 |
+| bind | 显式登记一个已有 pane 的绑定 | 1 |
 | attach | 在真实终端中进入会话，默认只读观察 | 1 |
 | handoff | 显式交接人工和 Agent 控制权 | 1 |
 | capture | 获取有界的终端文本快照 | 1 |
 | send | 人工控制模式下的显式原始输入 | 1 |
 | recover-lock | 显式处理已确认失去持有者的本地目录锁，不恢复远端执行权限 | 1 |
-| stop | 经明确确认后停止受管理的本地会话 | 1 |
 | shell-init | 生成供用户在目标 shell 中粘贴的初始化代码 | 2 |
 | confirm-shell | 在人工确认的提示符状态下验证初始化响应 | 2 |
 | exec | 执行受限的非交互命令 | 2 |
@@ -180,6 +179,8 @@ flowchart TD
 | interrupt | 经显式授权后尝试中断一个绑定请求 | 2 |
 
 文中列出的是目标接口。尚未实现的子命令不得由 capabilities 声称可用，也不得提前写入可执行的 Agent 使用示例。
+
+`session` 和 `session list` 列出当前会话，`--history` 同时列出已归档会话。`session --session-id ID` 与 `session status --session-id ID` 查看同一份详情，也可用 `--session NAME` 选择。无选择器的 `session status` 仅在恰有一个会话时查询它。`session stop` 和 `session unbind` 需要显式选择会话并确认，沿用原有授权、锁及请求约束。原顶层 `status` 迁移到 `session status`。顶层 `list`、`stop` 和 `unbind` 继续为既有调用方提供原入口。
 
 ### 4.2 参数约定
 
@@ -217,19 +218,19 @@ exec ssh -tt bastion
 
 Bridge 不自动输入认证信息，不增加未授权的连接路径，不默认改变 SSH 审计或 ControlMaster 配置。受管理 pane 在创建前明确设置 tmux 的 default-terminal 为 screen-256color，避免随本机 tmux 编译默认值采用远端不认识的 tmux-256color。此设置仅作用于 Bridge 私有 tmux server 的新 pane；复用旧 server 时也须在创建前应用，不修改外部绑定、已有 pane 的环境或用户全局 tmux 配置。SSH 仍由 OpenSSH 按 pane 的 TERM 申请远端 PTY，不自动探测远端 terminfo 或安装终端定义。
 
-所有由 Bridge 新建的 SSH 进程默认移除 LANG、LC_ALL、LC_CTYPE、LC_TERMINAL、LC_TERMINAL_VERSION，不新增配置或按公司/入口名特判；远端 locale 由服务端默认环境和用户明确的 SSH 设置决定。connect、start --ssh 和显式 r 重连共用此行为。tmux 完成 pane 环境组装后，以参数数组启动本机 /usr/bin/env -u … ssh -tt SSH_ALIAS，不经本地 shell 拼接；env 随后 exec SSH，保留同一个 pane 主进程 PID。仅清理 Bridge 启动进程自身的环境不足以处理旧 tmux server 中保留的变量，因此清理必须位于 SSH 子进程边界。其他变量（包括 PATH、SSH_AUTH_SOCK 和其余 LC_*）、本地 start shell、Bridge 进程、tmux server 环境和已有/外部 pane 均保持原状。仍尊重用户 OpenSSH 配置中的显式 SetEnv，不强设本机 locale 到远端，不关闭录制或认证。更新二进制后使用 --new 或从新版视图显式重连，已有连接不会自动替换。
+所有由 Bridge 新建的 SSH 进程默认移除 LANG、LC_ALL、LC_CTYPE、LC_TERMINAL、LC_TERMINAL_VERSION，不新增配置或按公司/入口名特判；远端 locale 由服务端默认环境和用户明确的 SSH 设置决定。connect、start --ssh 和显式 r 重连共用此行为。tmux 完成 pane 环境组装后，以参数数组启动本机 /usr/bin/env -u … ssh -tt SSH_ALIAS，不经本地 shell 拼接；env 随后 exec SSH，保留同一个 pane 主进程 PID。仅清理 Bridge 启动进程自身的环境不足以处理旧 tmux server 中保留的变量，因此清理必须位于 SSH 子进程边界。其他变量（包括 PATH、SSH_AUTH_SOCK 和其余 LC_*）、本地 start shell、Bridge 进程、tmux server 环境和已有/外部 pane 均保持原状。仍尊重用户 OpenSSH 配置中的显式 SetEnv，不强设本机 locale 到远端，不关闭录制或认证。更新二进制后运行 `connect SSH_ALIAS` 新建连接，或在连接结束后从新版视图显式重连。
 
 ### 4.4 连接选择与名称历史
 
-connect SSH_ALIAS 按 active bindings 中的 sshAlias 精确查找：唯一存活连接返回原 ID，多条存活连接由用户选择；--new 创建额外连接并自动分配名称。显式 --session NAME 仅在名称的入口与请求入口一致时复用，其他/未知入口不认领。端点自报名称不作为此索引，也不据此自动授权任务。
+`connect SSH_ALIAS` 每次新建独立的 SSH 会话并分配新 ID，`--new` 保留兼容。返回已登记的会话时，直接运行 `connect`，多个候选由用户选择，也可用 `connect --session-id ID` 精确进入。`connect SSH_ALIAS --session NAME` 仅在显式名称的入口与请求入口一致时复用活连接，匹配的连接已结束时先归档再重建；其他/未知入口不认领。带 `--new` 和显式名称时，已占用该名称的活连接返回冲突。入口以登记的 SSH 配置别名为准，任务授权需人工交接。
 
 默认显示名将 SSH 入口中的点号转换为连字符，并在名称占用时增加编号；SSH 参数与连接索引始终保留原始入口，不因显示名转换而合并不同入口。
 
 交互式 connect 在选定会话后，将完整的 `session_id=<ID>`（无末尾换行）复制到运行 CLI 的本机剪贴板，并显示复制结果；新建、返回已有会话和显式 r 重连均适用，多候选时仅复制用户最终选中的 ID。macOS 调用 pbcopy，Linux 按显示环境优先调用 wl-copy，或回退到 xclip/xsel 的 clipboard selection。使用参数数组与 stdin 传递内容，每个工具最多等待 1 秒；缺失、失败或超时仅提示手动复制，不阻止连接。此操作不向远端发送输入，不使用远端 OSC 52，非交互命令不写剪贴板。
 
-前台窗口关闭仅脱离；SSH 保留时再次连接沿用 ID。已结束对象经资源锁→registry 锁二次验证后，先写入私有 history/<session_id>.json，再移除当前 bindings/<alias-hash>.json 索引；之后可用同名创建新 ID。并发选择/创建另按 SSH 入口加本地锁，不能按超时抢占锁。目录项同步和先存历史保证崩溃时最多留下可核对的重复副本，不丢失旧 ID。
+前台窗口关闭仅脱离；返回同一个活会话时沿用 ID。通过显式名称或原窗口的 r 重用已结束连接的名称时，先经资源锁→registry 锁二次验证，再写入私有 history/<session_id>.json，然后移除当前 bindings/<alias-hash>.json 索引；之后可用同名创建新 ID。并发创建另按 SSH 入口加本地锁，不能按超时抢占锁。目录项同步和先存历史保证崩溃时最多留下可核对的重复副本，不丢失旧 ID。
 
-旧 ID 的 status 和 request 读取历史绑定及原请求元数据，list --history 可查看历史。所有终端/恢复写入拒绝 ARCHIVED_SESSION；名称重新使用不改变旧请求，也不把已解析的旧 ID 静默指向新连接。旧 bindings 文件无需批量迁移，历史目录首次归档才创建；取消绑定也保留只读历史。
+旧 ID 的 `session status` 和 `request` 读取历史绑定及原请求元数据，`session --history` 可查看历史。所有终端/恢复写入拒绝 ARCHIVED_SESSION；名称重新使用不改变旧请求，也不把已解析的旧 ID 静默指向新连接。旧 bindings 文件无需批量迁移，历史目录首次归档才创建；取消绑定也保留只读历史。
 
 ### 4.5 绑定身份与范围
 
@@ -307,7 +308,7 @@ Bridge 创建的会话使用独立 tmux socket 和受控配置，避免受用户
 }
 ```
 
-status 是只读操作，不发送探测、不按回车、不进行 shell 初始化。无法确认的 endpoint 返回 null，不能根据 pane_pid、进程名、标题或提示符猜测远端主机。
+`session status` 只读取本地状态。无法确认的 endpoint 返回 null，不能根据 pane_pid、进程名、标题或提示符猜测远端主机。
 
 展示状态 `awaiting_human` 表示尚未完成 shell 准备，不表示用户尚未登录。人工登录以及聊天中的交接确认不会自行改变该状态；Agent 已收到适用于同一未变化会话的登录、目标选择和空闲 shell 交接确认时，应调用 `ready --session-id ID --confirm --json`，不能仅因该状态或 `next_action.requires_confirmation=true` 重复询问。后者描述管理操作的确认前提，已有的有效交接可满足此前提。仅有 ID 不构成交接；人工接管、重连、绑定或 shell 变化及未知结果后，仍按相应流程重新交接或恢复。
 
@@ -410,7 +411,7 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 
 ### 7.2 初始化与交接流程
 
-1. 用户确认登录与目标选择完成，所选 session_id 当前是受支持的空闲 Bash shell，而非菜单、编辑器或密码输入状态。单会话的 ID 可由 Agent 从 list 获取。
+1. 用户确认登录与目标选择完成，所选 session_id 当前是受支持的空闲 Bash shell，而非菜单、编辑器或密码输入状态。单会话的 ID 可由 Agent 从 `session --json` 获取。
 2. ready 取得资源锁，验证绑定、权限、无未决任务，持久化准备记录和客户端恢复信息，再冻结人工输入。
 3. 订阅输出后发送内置 bootstrap，通过不超过 384 字符的编码块与逐块随机请求 ACK 传输内置 helper。完整输入行受配置上限约束，不通过一次性大段模拟键入或固定 sleep 判断完成。
 4. bootstrap 在非导出的暂存函数内校验序号/长度、解码并定义 helper，之后移除暂存函数与变量；全部操作不写远端文件。
@@ -679,7 +680,10 @@ retryable 仅指可安全再次发起该操作；结果未知的 exec 必须为 
 
 capabilities 返回实际安装版本支持的接口、shell 配置和 schema。仅完成 Phase 1 的版本应明确 exec=false；当前实现已包含 Phase 2，不让 Agent 通过危险的试执行来发现能力。
 
-features 表示软件已实现的能力，不表示当前会话已获授权；例如 raw_send=true 与默认策略禁用原始输入可以同时成立。status 应另行返回当前绑定的有效 permissions，调用方必须同时检查。
+features 表示软件已实现的能力，不表示当前会话已获授权；例如 raw_send=true 与默认策略禁用原始输入可以同时成立。`session status` 应另行返回当前绑定的有效 permissions，调用方必须同时检查。
+
+`connection_reuse` 表示 connect 支持重新进入已登记的会话。带 SSH 入口且未指定会话名称时，connect 新建会话。
+`session_management` 表示统一的 `session` 入口可用。
 
 ```json
 {
@@ -693,6 +697,7 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
     "shell_init": true,
     "directory_lock_recovery": true,
     "connect": true,
+    "session_management": true,
     "session_id_selection": true,
     "ready": true,
     "takeover": true,
@@ -713,7 +718,7 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
 
 如果宿主没有本地命令执行能力，可后续增加独立的 stdio 适配层，但不将其作为核心依赖，也不默认暴露 HTTP 监听端口。
 
-本地权限诊断通过 doctor 返回 state_read/state_write、tmux_socket、process_identity 与 required_access。LOCAL_ACCESS_DENIED 返回退出码 5；status 将绑定标为 unverified、状态为 access_denied，给出本地授权动作，不转为 connection_ended。PROCESS_IDENTITY_UNKNOWN 等未能完成的检查保持 inspection_failed。真正对象缺失仍返回失效状态，exec 遇到任何未核实状态均拒绝继续。仅向有权限的本地临时文件写入探针，不探测远端登录界面。命令级授权与后续按 session 受控接口设计见 [沙箱接入](docs/sandbox-access.md)。
+本地权限诊断通过 doctor 返回 state_read/state_write、tmux_socket、process_identity 与 required_access。LOCAL_ACCESS_DENIED 返回退出码 5；`session status` 将绑定标为 unverified、状态为 access_denied，给出本地授权动作，不转为 connection_ended。PROCESS_IDENTITY_UNKNOWN 等未能完成的检查保持 inspection_failed。真正对象缺失仍返回失效状态，exec 遇到任何未核实状态均拒绝继续。仅向有权限的本地临时文件写入探针，不探测远端登录界面。命令级授权与后续按 session 受控接口设计见 [沙箱接入](docs/sandbox-access.md)。
 
 ## 11. 配置、权限与数据保护
 
@@ -870,11 +875,11 @@ typecheck 调用 `bun run --bun tsc --noEmit`，使用已安装的锁定版本�
 
 各宿主可使用其支持的说明文件加载以下规则，核心 CLI 不自动识别 Agent 品牌或写入宿主配置：
 
-随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。默认帮助只展示 connect/status/takeover/resume，完整命令通过 --help --advanced 或 JSON 帮助查询。
+随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。默认帮助展示 connect、session、takeover 和 resume。完整命令通过 `--help --advanced` 或 JSON 帮助查询。
 
 skill 仅面向当前 CLI 的 session_id 流程，不维护旧版兼容分支。实际安装缺少本次操作所需能力时，停止并提示更新 CLI；能力与会话权限检查仍然保留。
 
-1. 先查询 capabilities 与 status，使用实际实现的能力。
+1. 先查询 `capabilities --json` 和 `session --json`，再按明确的会话 ID 查看状态。
 2. 仅操作用户明确授权的 Bridge 会话。
 3. 认证和菜单选择由用户完成；明确交接后，由 ready 自动准备目标 shell，不要求用户提供 hostname 或粘贴代码。
 4. 自动执行使用 exec，不使用 send+capture 模拟完成检测。
@@ -888,7 +893,7 @@ Phase 2 调用示例：
 
 ```bash
 remote-terminal capabilities --json
-remote-terminal status --session remote --json
+remote-terminal session --session remote --json
 remote-terminal exec --session remote --request-id req-001 --timeout 30 --json 'df -h'
 remote-terminal request --session remote --request-id req-001 --json
 ```
@@ -899,7 +904,7 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 
 ### Phase 1：可安装的受控共享终端
 
-实现 doctor、capabilities、会话创建与绑定、list/status、attach/handoff、capture、显式 send、recover-lock、unbind/stop。
+实现 doctor、capabilities、会话创建与绑定、会话查询和管理、attach/handoff、capture、显式 send 和 recover-lock。
 
 配置、授权范围、目录锁及遗留锁恢复、原子状态存储、错误码、数据保护和基础测试必须在本阶段实现，不能在已有写入能力后再补。
 
@@ -947,6 +952,7 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 | 状态 | pane 存活而 SSH 已退出、菜单、vim/top、未知提示符不被判定为远端 ready |
 | 输入 | 引号、反斜杠、分号、前导连字符、Unicode、CR/LF/ESC/NUL、超长输入 |
 | 人工登录 | 新建/复用旧 managed server 的 pane 均使用 screen-256color；本地模拟堡垒机选择目标后单次 Enter 进入 MFA 并等待人工输入，不重复换行或自动准备 shell；真实堡垒机仍需人工验收 |
+| 连接选择 | 同一 SSH 入口顺序或并发 connect 获得独立会话；无参数 connect 和精确 ID 可返回已有会话；同入口显式名称复用和已结束归档受原锁约束 |
 | SSH 环境 | 默认移除规定的五个变量，无需配置；旧 server 保留原值且新客户端已清理时仍生效；PATH/SSH agent/其他变量、本地 shell 不受影响；显式重连同样生效 |
 | shell 协议 | 专用函数缺失、初始化代次不符、不兼容 Bash 设置、回显不触发完成 |
 | 采集 | 任意字节分片、CR 重绘、ANSI/OSC、非法 UTF-8、无换行、大输出与慢消费者 |

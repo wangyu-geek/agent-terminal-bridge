@@ -145,8 +145,13 @@ for (const artifact of [
       await Bun.sleep(10)
     }
     assert.equal(await Bun.file(localeReport).text(), "")
-    await call(["stop", "--session-id", ssh.id, "--confirm"])
-    await call(["stop", "--confirm"])
+    const listed = await call(["session"])
+    assert(Array.isArray(listed.sessions) && listed.sessions.length === 2)
+    const sshStatus = await call(["session", "--session-id", ssh.id])
+    assert.equal(sshStatus.session_id, ssh.id)
+    assert.equal(sshStatus.binding, "valid")
+    await call(["session", "stop", "--session-id", ssh.id, "--confirm"])
+    await call(["session", "stop", "--session-id", binding.id, "--confirm"])
     console.log(
       `${artifact}: isolated startup, embedded languages/helper, execution and default SSH locale cleanup passed`,
     )

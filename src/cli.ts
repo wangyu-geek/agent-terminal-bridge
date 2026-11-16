@@ -60,10 +60,12 @@ const OPTIONS = {
   takeover: { type: "boolean" },
 } as const
 const COMMON = ["lang", "json", "help", "config", "session", "session-id"]
+const SESSION_ACTIONS = ["list", "status", "stop", "unbind"] as const
 const COMMAND_OPTIONS: Record<string, string[]> = {
   doctor: [],
   capabilities: [],
   connect: ["new"],
+  session: [],
   ready: ["confirm", "expected-host", "timeout"],
   takeover: ["confirm", "timeout"],
   resume: ["confirm", "expected-host", "timeout"],
@@ -71,7 +73,6 @@ const COMMAND_OPTIONS: Record<string, string[]> = {
   bind: ["socket", "pane", "permissions", "confirm"],
   unbind: ["confirm"],
   list: ["history"],
-  status: ["pane"],
   capture: ["lines", "screen", "pane"],
   send: ["raw", "text", "enter", "pane"],
   attach: ["writable"],
@@ -97,6 +98,7 @@ export function capabilities() {
       shell_init: true,
       directory_lock_recovery: true,
       connect: true,
+      session_management: true,
       session_id_selection: true,
       ready: true,
       takeover: true,
@@ -161,14 +163,32 @@ export async function main(args: string[]): Promise<number> {
       emit({ version: pkg.version }, json)
       return 0
     }
-    const command = positionals[0] ?? "help"
-    if (values.help || command === "help") {
+    const requestedCommand = positionals[0] ?? "help"
+    if (values.help || requestedCommand === "help") {
       try {
         const config = await loadConfig(values.config)
         i18n = createI18n(resolveLanguage(language ?? config.language))
       } catch (error) {
         if (!(error instanceof BridgeError)) throw error
         // Help stays available when configuration is broken or inaccessible.
+      }
+      if (requestedCommand === "session") {
+        emit(
+          {
+            command: "remote-terminal session",
+            version: pkg.version,
+            commands: SESSION_ACTIONS,
+            usage:
+              "remote-terminal session [list|status|stop|unbind] [--session-id ID | --session NAME] [--json]",
+            notes: [
+              "session lists registered sessions; add --history to include archived sessions",
+              "session --session-id ID shows the selected session's status",
+              "stop and unbind require an explicit session and confirmation",
+            ],
+          },
+          json,
+        )
+        return 0
       }
       const help = {
         command: "remote-terminal",
@@ -178,6 +198,8 @@ export async function main(args: string[]): Promise<number> {
         usage:
           "remote-terminal <command> [--session-id ID | --session NAME] [--lang auto|en|zh-CN] [--json]",
         notes: [
+          "connect SSH_ALIAS opens a new connection. Use connect or connect --session-id ID to return to an existing session",
+          "session lists registered sessions. Use session --help to see status and management commands",
           "start/bind register a pane; authentication remains manual",
           "raw send is disabled by default; send is not exec",
           "--confirm acknowledges an explicit management action",
@@ -189,11 +211,24 @@ export async function main(args: string[]): Promise<number> {
     }
     const config = await loadConfig(values.config)
     i18n = createI18n(resolveLanguage(language ?? config.language))
-    const allowed = COMMAND_OPTIONS[command]
+    const hasSelector =
+      values["session-id"] !== undefined || values.session !== undefined
+    const sessionAction =
+      requestedCommand === "session"
+        ? choice(
+            positionals[1] ?? (hasSelector ? "status" : "list"),
+            SESSION_ACTIONS,
+            "session action",
+          )
+        : undefined
+    const command = sessionAction ?? requestedCommand
+    const allowed =
+      sessionAction === "status" ? ["pane"] : COMMAND_OPTIONS[command]
     requireValue(allowed, "INVALID_INPUT", msg("error.unknown_command"))
     requireValue(
       positionals.length === 1 ||
-        (["exec", "connect"].includes(command) && positionals.length === 2),
+        (["exec", "connect", "session"].includes(requestedCommand) &&
+          positionals.length === 2),
       "INVALID_INPUT",
       msg("error.unexpected_positional_arguments"),
     )
@@ -214,6 +249,18 @@ export async function main(args: string[]): Promise<number> {
       "INVALID_INPUT",
       msg("error.use_either_session_id_or_session_not_both"),
     )
+    if (sessionAction === "list")
+      requireValue(
+        !hasSelector,
+        "INVALID_INPUT",
+        msg("error.session_list_selector"),
+      )
+    if (sessionAction === "stop" || sessionAction === "unbind")
+      requireValue(
+        hasSelector,
+        "INVALID_INPUT",
+        msg("error.session_management_selector"),
+      )
     if (command === "capabilities") {
       emit(capabilities(), json)
       return 0
@@ -308,38 +355,13 @@ export async function main(args: string[]): Promise<number> {
           for (const scope of abandoned)
             await recoverDirectoryLock(state.locks, scope)
         }
-        const candidates = await connections.open({
+        const selected = await connections.open({
           ssh: positionals[1],
           ...(values.session !== undefined
             ? { name: alias(values.session) }
             : {}),
           fresh: values.new ?? false,
         })
-        let index = 0
-        if (candidates.length > 1) {
-          console.error(
-            candidates
-              .map(
-                (binding, number) =>
-                  `${number + 1}. ${binding.alias} | session_id=${binding.id}`,
-              )
-              .join("\n"),
-          )
-          index =
-            integer(
-              Number(await ask(msg("connect.choose"))),
-              "session number",
-              1,
-              candidates.length,
-            ) - 1
-        }
-        const selected = candidates[index]
-        requireValue(
-          selected,
-          "INVALID_BINDING",
-          msg("error.no_connection_was_selected"),
-          4,
-        )
         name = await state.select(selected.id)
         await sessions.showSessionId(selected)
       } else {
@@ -377,7 +399,8 @@ export async function main(args: string[]): Promise<number> {
     const session =
       values["session-id"] !== undefined
         ? await state.select(values["session-id"])
-        : ["ready", "takeover", "resume"].includes(command)
+        : (sessionAction !== undefined && sessionAction !== "list") ||
+            ["ready", "takeover", "resume"].includes(command)
           ? await state.select(undefined, values.session)
           : alias(values.session ?? config.session)
     if (

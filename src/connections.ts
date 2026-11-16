@@ -13,18 +13,18 @@ export interface ConnectionOptions {
 export class Connections {
   constructor(readonly sessions: Sessions) {}
 
-  private async inspect(binding: Binding) {
-    const status = await this.sessions.status(binding.alias)
+  private async isEnded(name: string): Promise<boolean> {
+    const status = await this.sessions.status(name)
     if ("error" in status)
       throw new BridgeError(
         status.error.code,
         status.error.message,
         status.error.code === "LOCAL_ACCESS_DENIED" ? 5 : 8,
       )
-    return { binding, ended: status.display_state === "connection_ended" }
+    return status.display_state === "connection_ended"
   }
 
-  async open(options: ConnectionOptions): Promise<Binding[]> {
+  async open(options: ConnectionOptions): Promise<Binding> {
     const deadline = performance.now() + 5000
     while (true) {
       try {
@@ -32,57 +32,29 @@ export class Connections {
           this.sessions.state.locks,
           `connection:${digest(options.ssh)}`,
           async () => {
-            const all = await this.sessions.state.list()
-            const named = options.name
-              ? all.find((binding) => binding.alias === options.name)
-              : undefined
-            if (named) {
-              requireValue(
-                named.ownership === "managed" && named.sshAlias === options.ssh,
-                "SESSION_CONFLICT",
-                msg("error.connection_entry_conflict"),
-                4,
-              )
-              const current = await this.inspect(named)
-              if (!current.ended) {
-                requireValue(
-                  !options.fresh,
-                  "SESSION_CONFLICT",
-                  msg(
-                    "error.that_name_already_has_a_live_connection_omit_session_with_new_to_create_another",
-                  ),
-                  4,
-                )
-                return [named]
-              }
-              await this.sessions.archiveEnded(named.alias, named.id)
-              return [
-                await this.sessions.startConnection(options.ssh, named.alias),
-              ]
-            }
-            if (options.name || options.fresh)
-              return [
-                await this.sessions.startConnection(options.ssh, options.name),
-              ]
-            const candidates = await Promise.all(
-              all
-                .filter(
-                  (binding) =>
-                    binding.ownership === "managed" &&
-                    binding.sshAlias === options.ssh,
-                )
-                .map((binding) => this.inspect(binding)),
+            if (!options.name) return this.sessions.startConnection(options.ssh)
+            const named = (await this.sessions.state.list()).find(
+              (binding) => binding.alias === options.name,
             )
-            const live = candidates.filter((candidate) => !candidate.ended)
-            if (live.length) return live.map((candidate) => candidate.binding)
-            // A new explicit connect starts a fresh SSH login after all matching
-            // connections have ended; unknown request history is never acknowledged.
-            for (const candidate of candidates)
-              await this.sessions.archiveEnded(
-                candidate.binding.alias,
-                candidate.binding.id,
-              )
-            return [await this.sessions.startConnection(options.ssh)]
+            if (!named)
+              return this.sessions.startConnection(options.ssh, options.name)
+            requireValue(
+              named.ownership === "managed" && named.sshAlias === options.ssh,
+              "SESSION_CONFLICT",
+              msg("error.connection_entry_conflict"),
+              4,
+            )
+            if (await this.isEnded(named.alias)) {
+              await this.sessions.archiveEnded(named.alias, named.id)
+              return this.sessions.startConnection(options.ssh, named.alias)
+            }
+            requireValue(
+              !options.fresh,
+              "SESSION_CONFLICT",
+              msg("error.live_connection_name_conflict"),
+              4,
+            )
+            return named
           },
         )
       } catch (error) {
@@ -113,13 +85,12 @@ export class Connections {
       msg("error.this_session_has_no_managed_ssh_entry_to_reconnect"),
       4,
     )
-    const result = await this.open({
+    const selected = await this.open({
       ssh: binding.sshAlias,
       name: binding.alias,
     })
-    const selected = result[0]
     requireValue(
-      selected && selected.id !== binding.id,
+      selected.id !== binding.id,
       "SESSION_CONFLICT",
       msg(
         "error.the_old_connection_is_still_live_inspect_it_before_reconnecting",

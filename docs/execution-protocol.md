@@ -44,7 +44,7 @@ Default view state changes reset mouse/style modes without restoring a saved ter
 
 Input-row projection and human sends from the same viewer share a local serial queue. This prevents the viewer's own projection from causing a BUSY input rejection just after an external CLI handoff. It does not replace the resource lock or defer Agent-owned input until takeover: each batch still checks its received and current ownership, generation and nonce under the cross-process lock.
 
-Display names point to current bindings; retired bindings are stored by immutable ID before a name can be reused. Historical status/request read original task metadata; terminal mutations reject ARCHIVED_SESSION. Saved unknown results are neither acknowledged nor replayed by connection replacement. Local socket/process permission failures report LOCAL_ACCESS_DENIED/unverified and do not establish endpoint loss.
+Display names point to current bindings; retired bindings are stored by immutable ID before a name can be reused. `session --session-id ID` and `request` can read metadata for archived IDs. Terminal mutations return ARCHIVED_SESSION. Saved unknown results are neither acknowledged nor replayed by connection replacement. Local socket/process permission failures report LOCAL_ACCESS_DENIED/unverified and do not establish endpoint loss.
 
 ## Durable coordination
 

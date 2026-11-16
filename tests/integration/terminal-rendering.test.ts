@@ -104,7 +104,7 @@ for (const language of ["en", "zh-CN"] as const)
         const binding = await f.binding("render-entry")
         f.sockets.add(binding.socketPath)
         await f.humanRoundTrip(owner.terminal, () => raw, binding.alias)
-        const statusArgs = ["status", "--session-id", binding.id, "--json"]
+        const statusArgs = ["session", "--session-id", binding.id, "--json"]
         expect(
           (await f.cli([...statusArgs, "--lang", "zh-CN"])).result,
         ).toEqual((await f.cli([...statusArgs, "--lang", "en"])).result)

@@ -65,7 +65,19 @@ Include the banner's `session_id` when choosing a particular session. `awaiting_
 
 You can watch the Agent's commands and results in the same terminal. While the Agent controls input, you can still scroll, select and copy text.
 
-The SSH connection must be started inside Bridge; an SSH process already running in another terminal cannot be adopted. To reopen a session later, run `remote-terminal connect`. Use `remote-terminal connect bastion --new` to start another connection.
+The SSH connection must be started inside Bridge; an SSH process already running in another terminal cannot be adopted. Run `remote-terminal connect bastion` in each terminal to start a separate SSH session with its own ID. To reopen an existing session, run `remote-terminal connect` or select it directly with `remote-terminal connect --session-id ID`.
+
+## Manage sessions
+
+Run `remote-terminal session` to list sessions and their status. Use `--history` to include archived sessions.
+
+```bash
+remote-terminal session --session-id ID
+remote-terminal session stop --session-id ID
+remote-terminal session unbind --session-id ID
+```
+
+The first command shows details for one session. `stop` stops its managed terminal. `unbind` removes the Bridge binding and leaves the terminal running. Both actions prompt for confirmation. Run `remote-terminal session --help` for the available options.
 
 ## Take back control
 
@@ -79,7 +91,7 @@ Bridge provides English and Simplified Chinese. It selects the display language 
 
 ```bash
 remote-terminal connect bastion --lang zh-CN
-remote-terminal status --lang en
+remote-terminal session --lang en
 remote-terminal --help --lang auto
 ```
 

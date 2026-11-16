@@ -59,7 +59,7 @@ integration(
         inputStarted: true,
       })
       const status = await fixture.cli([
-        "status",
+        "session",
         "--session-id",
         binding.id,
         "--json",

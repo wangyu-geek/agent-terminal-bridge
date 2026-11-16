@@ -14,15 +14,18 @@ export const en = {
   "error.use_either_session_id_or_session_not_both":
     "Use either --session-id or --session, not both",
   "error.connect_is_interactive_use_list_status_json_for_inspection":
-    "connect is interactive; use list/status --json for inspection",
+    "connect is interactive. Use session --json to inspect sessions.",
+  "error.session_list_selector":
+    "Use session status with --session-id ID or --session NAME to inspect one session.",
+  "error.session_management_selector":
+    "Select the session to manage with --session-id ID or --session NAME.",
   "error.connect_requires_a_real_terminal_run_remote_terminal_connect_ssh_alias_there":
     "connect requires a real terminal; run remote-terminal connect SSH_ALIAS there",
   "error.new_requires_an_ssh_entry_alias": "--new requires an SSH entry alias",
   "error.connect_selector_conflict":
-    "Use connect --session-id to return to that exact session, or connect SSH_ALIAS to select its connections",
+    "Use connect --session-id ID to return to that session, or connect SSH_ALIAS to open a new connection",
   "error.local_setup_lock_ownership_cannot_be_verified_controlled_maintenance_is_required":
     "Local setup lock ownership cannot be verified; controlled maintenance is required",
-  "error.no_connection_was_selected": "No connection was selected",
   "error.choose_a_listed_session_number": "Choose a listed session number",
   "error.pane_cannot_expand_a_registered_binding":
     "--pane cannot expand a registered binding",
@@ -67,8 +70,8 @@ export const en = {
   "error.must_be_absolute": "{name} must be absolute",
   "error.connection_entry_conflict":
     "That name belongs to another or unknown SSH entry; return to it without an SSH argument, or omit --session to create a separate connection",
-  "error.that_name_already_has_a_live_connection_omit_session_with_new_to_create_another":
-    "That name already has a live connection; omit --session with --new to create another",
+  "error.live_connection_name_conflict":
+    "That name already has a live connection. Omit --session to open a new connection with an automatic name.",
   "error.the_old_connection_name_now_identifies_another_session_select_the_new_id_explicitly":
     "The old connection name now identifies another session; select the new ID explicitly",
   "error.this_session_has_no_managed_ssh_entry_to_reconnect":
@@ -217,8 +220,8 @@ export const en = {
     "Session name is already registered; select it explicitly or choose a new --session name",
   "error.local_openssh_is_required_for_a_new_connection":
     "Local OpenSSH is required for a new connection",
-  "error.this_display_name_is_occupied_return_to_it_explicitly_or_use_new_without_session":
-    "This display name is occupied; return to it explicitly or use --new without --session",
+  "error.connection_name_occupied":
+    "This display name is occupied. Select it explicitly or omit --session to open a new connection.",
   "error.session_changed_before_archival": "Session changed before archival",
   "error.a_live_connection_cannot_be_retired_to_reuse_its_name":
     "A live connection cannot be retired to reuse its name",
@@ -296,7 +299,7 @@ export const en = {
   "error.no_shared_session_exists_run_remote_terminal_connect_ssh_alias_in_a_real_terminal":
     "No shared session exists; run remote-terminal connect SSH_ALIAS in a real terminal",
   "error.multiple_sessions_exist_select_a_session_id_from_remote_terminal_list":
-    "Multiple sessions exist; select a session_id from remote-terminal list",
+    "Multiple sessions exist. Select a session_id from remote-terminal session.",
   "error.no_shared_session_exists": "No shared session exists",
   "error.unsupported_binding_schema": "Unsupported binding schema",
   "error.invalid_tmux_identity": "Invalid tmux identity",
@@ -386,10 +389,22 @@ export const en = {
     "Take over and inspect the terminal before resuming",
   "language.invalid": "language must be auto, en or zh-CN",
   "help.title": "remote-terminal — shared terminal for you and your Agent",
-  "help.connect":
-    "  connect SSH_ALIAS   Return to its connection, or open one and log in",
-  "help.return": "  connect             Return to an existing shared terminal",
-  "help.status": "  status              Show the current state and next step",
+  "help.connect": "  connect SSH_ALIAS   Open a new SSH session and log in",
+  "help.return":
+    "  connect             Return to an existing session. Use --session-id ID to select it directly.",
+  "help.session":
+    "  session             List and manage sessions. See session --help",
+  "help.session_title": "remote-terminal session — manage shared sessions",
+  "help.session_list":
+    "  session [list] [--history]          List sessions and their status",
+  "help.session_status":
+    "  session [status] --session-id ID    Show one session's status",
+  "help.session_stop":
+    "  session stop --session-id ID        Stop a managed session",
+  "help.session_unbind":
+    "  session unbind --session-id ID      Remove a binding and leave the terminal running",
+  "help.session_options":
+    "Use --session NAME to select by name. Stop and unbind require confirmation. Add --json for machine output.",
   "help.takeover": "  takeover            Return input control to you",
   "help.resume":
     "  resume              Continue after you have inspected the shell",
@@ -434,7 +449,7 @@ export const en = {
   "next.local_access":
     "Run remote-terminal doctor --session-id ID. Grant the reported local Bridge resources for the invocation, then retry inspection.",
   "next.archived":
-    "Query old request IDs with this historical session_id; use list to select the current connection for terminal operations.",
+    "Query old requests with this historical session_id. Run remote-terminal session to find a current session.",
   "next.tty":
     "Open a real local terminal and run remote-terminal connect SSH_ALIAS.",
   "next.dependencies_mac":
@@ -442,7 +457,7 @@ export const en = {
   "next.dependencies_linux":
     "Check local Bun/tmux/OpenSSH. On Debian/Ubuntu install tmux and openssh-client; the standalone binary includes Bun.",
   "next.select":
-    "Run connect SSH_ALIAS to return to its connection, list to select an exact session_id, or connect SSH_ALIAS --new for another connection.",
+    "Run connect to choose an existing session, connect --session-id ID to return directly, or connect SSH_ALIAS to open a new connection.",
   "next.resume":
     "Ask your Agent to take over this session; inspect it, then confirm resume.",
   "next.busy":

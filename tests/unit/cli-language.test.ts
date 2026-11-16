@@ -21,9 +21,17 @@ async function fixture() {
 
 test("help detects the local language and supports manual and persistent overrides", async () => {
   const f = await fixture()
-  expect((await f.cli(["--help"])).stdout).toContain("shared terminal for you")
+  const english = (await f.cli(["--help"])).stdout
+  expect(english).toContain("shared terminal for you")
+  expect(english).toContain("Open a new SSH session")
+  expect(english).toContain("Return to an existing session")
+  expect(english).toContain("List and manage sessions")
   f.env.LANG = "zh_CN.UTF-8"
-  expect((await f.cli(["--help"])).stdout).toContain("你与 Agent 的共享终端")
+  const chinese = (await f.cli(["--help"])).stdout
+  expect(chinese).toContain("你与 Agent 的共享终端")
+  expect(chinese).toContain("新建 SSH 会话")
+  expect(chinese).toContain("返回已有会话")
+  expect(chinese).toContain("查看和管理会话")
   expect((await f.cli(["--help", "--lang", "en"])).stdout).toContain(
     "shared terminal for you",
   )
@@ -115,9 +123,10 @@ test("JSON help, capabilities and errors are independent of the display language
   const f = await fixture()
   for (const args of [
     ["--help"],
+    ["session", "--help"],
     ["capabilities"],
     ["unknown"],
-    ["status", "--pane", "bad"],
+    ["session", "status", "--pane", "bad"],
   ]) {
     const english = await f.cli([...args, "--lang", "en", "--json"])
     const chinese = await f.cli([...args, "--lang", "zh-CN", "--json"])
@@ -130,6 +139,20 @@ test("JSON help, capabilities and errors are independent of the display language
     schema_version: 1,
     error: { code: "INVALID_INPUT", message: "Invalid language" },
   })
+  const rootHelp = (await f.cli(["--help", "--json"])).result
+  expect(rootHelp.commands).toContain("session")
+  expect(rootHelp.commands).not.toContain("status")
+  const sessionHelp = await f.cli(["session", "--help", "--json"])
+  expect(sessionHelp.result.commands).toEqual([
+    "list",
+    "status",
+    "stop",
+    "unbind",
+  ])
+  const localized = await f.cli(["session", "--help", "--lang", "zh-CN"])
+  expect(localized.stdout).toContain("查看指定会话状态")
+  expect(localized.stdout).toContain("session stop")
+  expect(localized.stdout).toContain("session unbind")
 })
 
 test("language flags after the argument terminator are treated as command data", async () => {

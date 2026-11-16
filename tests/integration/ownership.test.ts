@@ -124,7 +124,9 @@ integration(
       "--json",
     ])
     expect(result.code).toBe(5)
-    expect((await f.cli(["status", "--json"])).result.shell).toMatchObject({
+    expect(
+      (await f.cli(["session", "status", "--json"])).result.shell,
+    ).toMatchObject({
       state: "unknown",
       endpoint_label: null,
     })

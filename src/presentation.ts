@@ -1,18 +1,29 @@
 import { createI18n, type I18n, Message, msg } from "./i18n.ts"
 
-export const MAIN_COMMANDS = ["connect", "status", "takeover", "resume"]
+export const MAIN_COMMANDS = ["connect", "session", "takeover", "resume"]
 
 export function humanResult(
   result: object,
   i18n: I18n = createI18n("en"),
 ): string {
+  if ("command" in result && result.command === "remote-terminal session")
+    return [
+      i18n.t("help.session_title"),
+      "",
+      i18n.t("help.session_list"),
+      i18n.t("help.session_status"),
+      i18n.t("help.session_stop"),
+      i18n.t("help.session_unbind"),
+      "",
+      i18n.t("help.session_options"),
+    ].join("\n")
   if ("commands" in result && Array.isArray(result.commands))
     return [
       i18n.t("help.title"),
       "",
       i18n.t("help.connect"),
       i18n.t("help.return"),
-      i18n.t("help.status"),
+      i18n.t("help.session"),
       i18n.t("help.takeover"),
       i18n.t("help.resume"),
       "",

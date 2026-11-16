@@ -123,7 +123,7 @@ integration(
     const capture = await fixture.cli(["capture", "--session-id", id, "--json"])
     for (let i = 0; i < 2; i++) {
       const waiting = await fixture.cli([
-        "status",
+        "session",
         "--session-id",
         id,
         "--json",
@@ -145,7 +145,7 @@ integration(
         `remote-terminal ready --session-id ${id} --confirm --json`,
       )
     }
-    const humanStatus = await fixture.cli(["status", "--session-id", id])
+    const humanStatus = await fixture.cli(["session", "--session-id", id])
     expect(humanStatus.code).toBe(0)
     expect(humanStatus.stdout).toContain("login is not checked")
     const unconfirmed = await fixture.cli([
@@ -190,7 +190,7 @@ integration(
       completed: true,
       terminal_output: "one",
     })
-    const status = await fixture.cli(["status", "--session-id", id, "--json"])
+    const status = await fixture.cli(["session", "--session-id", id, "--json"])
     expect(status.result).toMatchObject({
       display_state: "ready",
       recent_requests: [
@@ -219,13 +219,13 @@ integration(
     ).toBe(true)
     expect((await fixture.binding()).id).toBe(id)
     expect(
-      (await fixture.cli(["status", "--session-id", "f".repeat(32), "--json"]))
+      (await fixture.cli(["session", "--session-id", "f".repeat(32), "--json"]))
         .code,
     ).toBe(4)
     expect(
       (
         await fixture.cli([
-          "status",
+          "session",
           "--session-id",
           id,
           "--session",
@@ -440,8 +440,8 @@ for (const phase of [
             ).code,
           ).toBe(6)
           expect(
-            (await fixture.cli(["status", "--session-id", id, "--json"])).result
-              .display_state,
+            (await fixture.cli(["session", "--session-id", id, "--json"]))
+              .result.display_state,
           ).toBe("preparing")
         }
         if (phase === "handshaking") {
@@ -461,7 +461,7 @@ for (const phase of [
         owner.kill("SIGKILL")
         await owner.exited
         const status = await fixture.cli([
-          "status",
+          "session",
           "--session-id",
           id,
           "--json",
@@ -531,8 +531,9 @@ integration(
       new Response(owner.stdout).arrayBuffer(),
       new Response(owner.stderr).arrayBuffer(),
     ])
-    const status = (await fixture.cli(["status", "--session-id", id, "--json"]))
-      .result
+    const status = (
+      await fixture.cli(["session", "--session-id", id, "--json"])
+    ).result
     const recent = status.recent_requests
     if (!Array.isArray(recent) || recent.length !== 1)
       throw new Error("The single lost request was not uniquely indexed")

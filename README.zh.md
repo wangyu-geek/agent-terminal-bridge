@@ -65,7 +65,19 @@ remote-terminal connect bastion
 
 你可以在同一个终端中查看 Agent 的命令和结果。Agent 控制输入时，你仍可滚动、选择和复制文本。
 
-SSH 连接必须从 Bridge 中启动；不能接管其他终端中已运行的 SSH 进程。之后可运行 `remote-terminal connect` 返回已有会话；运行 `remote-terminal connect bastion --new` 可新建连接。
+SSH 连接必须从 Bridge 中启动；不能接管其他终端中已运行的 SSH 进程。在每个终端运行 `remote-terminal connect bastion` 会各自新建 SSH 连接，并分配独立的会话 ID。要返回已有会话，运行 `remote-terminal connect`，或用 `remote-terminal connect --session-id ID` 直接打开指定会话。
+
+## 管理会话
+
+运行 `remote-terminal session` 列出会话及其状态。加上 `--history` 可查看已归档会话。
+
+```bash
+remote-terminal session --session-id ID
+remote-terminal session stop --session-id ID
+remote-terminal session unbind --session-id ID
+```
+
+第一条命令查看指定会话的详情。`stop` 停止受管理的终端，`unbind` 解除 Bridge 绑定并让终端继续运行。停止和解绑都需要确认。运行 `remote-terminal session --help` 查看可用选项。
 
 ## 接回控制权
 
@@ -79,7 +91,7 @@ Bridge 提供英文和简体中文，按以下顺序选择显示语言：`--lang
 
 ```bash
 remote-terminal connect bastion --lang zh-CN
-remote-terminal status --lang en
+remote-terminal session --lang en
 remote-terminal --help --lang auto
 ```
 

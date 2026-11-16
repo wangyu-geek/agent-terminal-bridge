@@ -17,26 +17,48 @@ async function fixture(raw = false) {
 }
 
 integration(
-  "real CLI creates and reuses a registered pane with conservative state",
+  "session lists, inspects and stops a registered pane with explicit confirmation",
   async () => {
     const f = await fixture()
     const started = await f.cli(["start", "--json"])
     expect(started.code).toBe(0)
     const repeated = await f.cli(["start", "--json"])
     expect(repeated.result.binding_id).toBe(started.result.binding_id)
-    const status = await f.cli(["status", "--json"])
+    const binding = await f.binding()
+    const target = ["--session-id", binding.id, "--json"]
+    const listed = await f.cli(["session", "--json"])
+    expect(listed.code).toBe(0)
+    expect(listed.result.sessions).toMatchObject([
+      { session_id: binding.id, display_state: "awaiting_human" },
+    ])
+    expect((await f.cli(["session", "list", "--json"])).result).toEqual(
+      listed.result,
+    )
+    const status = await f.cli(["session", "status", "--json"])
     expect(status.result).toMatchObject({
+      session_id: binding.id,
       binding: "valid",
       control: "human",
       shell: { state: "uninitialized", endpoint_label: null },
     })
+    expect((await f.cli(["session", ...target])).result).toEqual(status.result)
     expect(
       (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
         .code,
     ).toBe(5)
-    expect((await f.cli(["stop", "--json"])).code).toBe(5)
-    expect((await f.cli(["stop", "--confirm", "--json"])).code).toBe(0)
-    expect((await f.cli(["status", "--json"])).result.binding).toBe("stale")
+    expect((await f.cli(["session", "stop", "--confirm", "--json"])).code).toBe(
+      2,
+    )
+    const unconfirmed = await f.cli(["session", "stop", ...target])
+    expect(unconfirmed.code).toBe(5)
+    expect(unconfirmed.result.error).toMatchObject({
+      code: "CONFIRMATION_REQUIRED",
+    })
+    expect((await f.cli(["session", ...target])).result.binding).toBe("valid")
+    const stopped = await f.cli(["session", "stop", "--confirm", ...target])
+    expect(stopped.code).toBe(0)
+    expect(stopped.result.local_session_stopped).toBe(true)
+    expect((await f.cli(["session", ...target])).result.binding).toBe("stale")
   },
 )
 
@@ -77,9 +99,9 @@ integration(
         ])
       ).code,
     ).toBe(2)
-    expect((await f.cli(["status", "--pane", "%999999", "--json"])).code).toBe(
-      5,
-    )
+    expect(
+      (await f.cli(["session", "status", "--pane", "%999999", "--json"])).code,
+    ).toBe(5)
     const audit = await readFile(`${f.statePath}/audit.jsonl`, "utf8")
     expect(audit).not.toContain("literal")
     expect(audit).not.toContain("printf")
@@ -99,7 +121,9 @@ integration(
       paneTarget(binding),
       "/bin/sh",
     ])
-    expect((await f.cli(["status", "--json"])).result.binding).toBe("stale")
+    expect((await f.cli(["session", "status", "--json"])).result.binding).toBe(
+      "stale",
+    )
     expect(
       (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
         .code,
@@ -126,8 +150,29 @@ integration(
       (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
         .code,
     ).toBe(5)
-    expect((await f.cli(["stop", "--confirm", "--json"])).code).toBe(5)
-    expect((await f.cli(["unbind", "--confirm", "--json"])).code).toBe(0)
+    const binding = await f.binding()
+    const target = ["--session-id", binding.id, "--json"]
+    expect(
+      (await f.cli(["session", "stop", "--confirm", ...target])).code,
+    ).toBe(5)
+    expect((await f.cli(["session", "unbind", ...target])).code).toBe(5)
+    const unbound = await f.cli([
+      "session",
+      "unbind",
+      "--session",
+      binding.alias,
+      "--confirm",
+      "--json",
+    ])
+    expect(unbound.code).toBe(0)
+    expect(unbound.result.unbound).toBe(true)
+    expect((await f.cli(["session", ...target])).result.binding).toBe(
+      "archived",
+    )
+    expect((await f.cli(["session", "--json"])).result.sessions).toEqual([])
+    expect(
+      (await f.cli(["session", "--history", "--json"])).result.sessions,
+    ).toMatchObject([{ session_id: binding.id, binding: "archived" }])
     expect(
       await f.tmux(external.socket, [
         "display-message",
@@ -164,7 +209,7 @@ integration(
     await writeFile(`${f.statePath}/bindings/${files[0]}`, "{broken", {
       mode: 0o600,
     })
-    expect((await f.cli(["status", "--json"])).code).toBe(8)
+    expect((await f.cli(["session", "status", "--json"])).code).toBe(8)
   },
 )
 
@@ -174,6 +219,9 @@ integration(
     const f = await fixture()
     for (const args of [
       ["nope", "--json"],
+      ["status", "--json"],
+      ["session", "unknown", "--json"],
+      ["session", "list", "--session", "remote", "--json"],
       ["capture", "--lines", "NaN", "--json"],
     ]) {
       const result = await f.cli(args)
@@ -185,6 +233,7 @@ integration(
     expect(capabilities.result.features).toMatchObject({
       exec: true,
       raw_send: true,
+      session_management: true,
     })
     expect((await f.cli(["exec", "--json", "pwd"])).code).toBe(4)
   },

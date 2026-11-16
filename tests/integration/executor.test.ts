@@ -238,7 +238,7 @@ integration(
     )
     try {
       await waitFor(async () =>
-        (await f.cli(["status", "--json"])).stdout.includes(
+        (await f.cli(["session", "status", "--json"])).stdout.includes(
           '"state":"running"',
         ),
       )
@@ -302,7 +302,9 @@ integration(
       recovery_required: false,
     })
     expect(await Bun.file(`${f.directory}/effect`).exists()).toBe(false)
-    expect((await f.cli(["status", "--json"])).result.shell).toMatchObject({
+    expect(
+      (await f.cli(["session", "status", "--json"])).result.shell,
+    ).toMatchObject({
       state: "unknown",
     })
   },
@@ -318,7 +320,7 @@ integration(
     const error = new Response(owner.stderr).text()
     try {
       await waitFor(async () =>
-        (await f.cli(["status", "--json"])).stdout.includes(
+        (await f.cli(["session", "status", "--json"])).stdout.includes(
           '"state":"running"',
         ),
       )

@@ -686,8 +686,8 @@ integration(
         nextAlias,
       )
       expect(
-        (await fixture.cli(["status", "--session-id", old.id, "--json"])).result
-          .display_state,
+        (await fixture.cli(["session", "--session-id", old.id, "--json"]))
+          .result.display_state,
       ).toBe("archived")
     } finally {
       await close(owner)
@@ -883,7 +883,7 @@ integration(
       owner.process.terminal?.write("q")
       expect(await owner.process.exited).toBe(0)
       expect(
-        (await fixture.cli(["status", "--session-id", binding.id, "--json"]))
+        (await fixture.cli(["session", "--session-id", binding.id, "--json"]))
           .result.binding,
       ).toBe("valid")
       await Bun.write(join(fixture.directory, "clipboard"), "other content")
@@ -913,31 +913,44 @@ integration(
 )
 
 integration(
-  "--new opens a separate SSH session and normal connect asks only when several matching sessions exist",
+  "repeating connect with an SSH alias opens a separate session, and bare connect selects an existing one",
   async () => {
     const fixture = await fakeSsh()
     const first = terminal(fixture, ["connect", "entry-one"])
     let second: ReturnType<typeof terminal> | undefined
+    let explicitNew: ReturnType<typeof terminal> | undefined
     let picker: ReturnType<typeof terminal> | undefined
     try {
       await until(async () => first.output().includes("[You control input]"))
       const a = await fixture.binding("entry-one")
       fixture.sockets.add(a.socketPath)
-      second = terminal(fixture, ["connect", "entry-one", "--new"])
+      second = terminal(fixture, ["connect", "entry-one"])
       const extra = second
       await until(async () => extra.output().includes("[You control input]"))
       const b = await fixture.binding("entry-one-2")
       expect(b.id).not.toBe(a.id)
-      picker = terminal(fixture, ["connect", "entry-one"])
+      expect(b.panePid).not.toBe(a.panePid)
+      expect(extra.output()).toContain(
+        `[Bridge entry-one-2] session_id=${b.id}`,
+      )
+      explicitNew = terminal(fixture, ["connect", "entry-one", "--new"])
+      const compatible = explicitNew
+      await until(async () =>
+        compatible.output().includes("[You control input]"),
+      )
+      const c = await fixture.binding("entry-one-3")
+      expect(c.id).not.toBe(b.id)
+      picker = terminal(fixture, ["connect"])
       const selection = picker
       await until(async () =>
         selection.output().includes("Choose a session number"),
       )
       expect(selection.output()).toContain(a.id)
       expect(selection.output()).toContain(b.id)
+      expect(selection.output()).toContain(c.id)
       selection.process.terminal?.write("2\r")
       await until(async () =>
-        selection.output().includes(`[Bridge entry-one-2] session_id=${b.id}`),
+        selection.output().includes(`Copied to clipboard: session_id=${b.id}`),
       )
       const conflict = terminal(fixture, [
         "connect",
@@ -954,6 +967,7 @@ integration(
       expect((await fixture.binding("entry-one")).id).toBe(a.id)
     } finally {
       if (picker) await close(picker)
+      if (explicitNew) await close(explicitNew)
       if (second) await close(second)
       await close(first)
     }
@@ -962,7 +976,7 @@ integration(
 )
 
 integration(
-  "connect selects its SSH entry instead of an unrelated legacy default name",
+  "connect opens a new SSH entry alongside a legacy binding and can reopen it by ID",
   async () => {
     const fixture = await fakeSsh()
     await fixture.cli(["start", "--json"])
@@ -988,12 +1002,22 @@ integration(
       await until(async () => owner.output().includes("[Local menu]"))
       owner.process.terminal?.write("q")
       expect(await owner.process.exited).toBe(0)
-      const returned = terminal(fixture, ["connect", "another-entry"])
+      const returned = terminal(fixture, [
+        "connect",
+        "--session-id",
+        created.id,
+      ])
       try {
         await until(async () =>
           returned.output().includes("[You control input]"),
         )
         expect((await fixture.binding("another-entry")).id).toBe(created.id)
+        expect(returned.output()).toContain(
+          `Copied to clipboard: session_id=${created.id}`,
+        )
+        expect(
+          (await fixture.cli(["list", "--json"])).result.sessions,
+        ).toHaveLength(2)
         expect(returned.output()).not.toContain("already exists")
       } finally {
         await close(returned)

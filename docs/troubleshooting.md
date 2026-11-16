@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with `capabilities --json`, `doctor --json`, then `status --session NAME --json`. Inspect reported evidence rather than assuming a pane means a connected server.
+Start with `capabilities --json`, `doctor --json`, then `session --session NAME --json`. Inspect reported evidence rather than assuming a pane means a connected server.
 
 | Symptom | Next action |
 |---|---|
@@ -31,7 +31,7 @@ Use the actual path when `XDG_CONFIG_HOME` or `--config PATH` selects a differen
 
 ## Local access and names
 
-connect SSH_ALIAS returns to a unique live connection for that SSH entry. --new opens another with an automatic name. A legacy remote record with no saved SSH entry is not a candidate. Closing a window preserves SSH; opening the same entry/name returns without a collision prompt. A genuinely ended connection is retired to read-only history before its name is reused. status/request accept historical IDs, while terminal mutations reject ARCHIVED_SESSION. list --history includes these records.
+`connect SSH_ALIAS` opens a new connection with an automatic name. Closing a window preserves its SSH session. To reopen it, run `connect` or `connect --session-id ID`. An explicit `connect SSH_ALIAS --session NAME` can reuse a live connection registered under the same SSH entry. Before reuse of an ended connection's name, its old ID is archived. Use `session --history` to find archived IDs and `session --session-id ID` or `request` to inspect them. Terminal mutations return `ARCHIVED_SESSION` for those IDs.
 
 LOCAL_ACCESS_DENIED (exit 5) with binding unverified means local access is blocked. Run doctor for the exact ID and review state read/write, socket and process checks. Never reconnect or delete a binding solely on this error. [Sandbox access](sandbox-access.md) explains command-level authorization and the limits of the shared socket.
 
@@ -39,7 +39,7 @@ LOCAL_ACCESS_DENIED (exit 5) with binding unverified means local access is block
 
 The text view suppresses standard cursor-position queries (`ESC [ 6 n`) that tmux has already answered. Older views forwarded the query to the outer terminal as well, allowing a second cursor report to enter the remote program's input. This is reproduced with an answering terminal emulator and real local tmux, but does not establish the cause of every bastion disconnect. Update and reopen the viewer to apply this fix; a running viewer does not hot-update. Other terminal-query variants are not covered by this specific fix.
 
-If login prints `'tmux-256color': unknown terminal type.`, the remote environment does not recognize the terminal type inherited from an older Bridge pane. Current managed panes explicitly use `screen-256color`, including when the private tmux server was already running. Update the executable, detach the old view, then run `remote-terminal connect bastion --new` and authenticate manually. Replace `bastion` with your SSH alias. Existing panes and externally bound terminals are unchanged; restarting only the viewer cannot change an SSH PTY's terminal type. Do not stop unrelated sessions or change global tmux settings to apply this fix.
+If login prints `'tmux-256color': unknown terminal type.`, the remote environment does not recognize the terminal type inherited from an older Bridge pane. Current managed panes explicitly use `screen-256color`, including when the private tmux server was already running. Update the executable, detach the old view, then run `remote-terminal connect bastion` and authenticate manually. Replace `bastion` with your SSH alias. Existing panes and externally bound terminals are unchanged; restarting only the viewer cannot change an SSH PTY's terminal type. Do not stop unrelated sessions or change global tmux settings to apply this fix.
 
 `Connection to … closed.` comes from SSH; `Connection ended. Old results may be unknown.` is the local view reporting that the connection ended. A terminal-type warning is a compatibility defect, but does not by itself establish the reason the server closed the connection. If it persists after a fresh connection with the updated binary, compare manual `ssh bastion` against the same target and check bastion authentication/session diagnostics. Bridge does not retry MFA or infer that authentication succeeded.
 
@@ -59,7 +59,7 @@ Managed SSH startup automatically removes `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_TERM
 
 If one local terminal disconnects during bastion selection while another enters with locale/asciinema errors, compare the environment actually sent by SSH. A prompt accompanied by recorder startup errors is not a clean acceptance result. The default cleanup lets the server choose its own locale; it does not force C.UTF-8, disable recording, downgrade OpenSSH, or change authentication/connection-sharing options. It addresses the observed inherited-environment difference without claiming a specific variable caused every disconnect.
 
-Update the executable and create a new connection with `remote-terminal connect bastion --new`, then authenticate manually. Reopening the viewer of an existing SSH process does not change that process's environment. First-login MFA and recording behavior still need real bastion acceptance. Do not add the previously proposed ssh_entries configuration: it was not implemented and the strict config parser does not accept it.
+Update the executable and create a new connection with `remote-terminal connect bastion`, then authenticate manually. Reopening the viewer of an existing SSH process does not change that process's environment. First-login MFA and recording behavior still need real bastion acceptance. Do not add the previously proposed ssh_entries configuration: it was not implemented and the strict config parser does not accept it.
 
 ## Unknown execution
 

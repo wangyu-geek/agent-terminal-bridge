@@ -9,7 +9,8 @@ Start by checking `capabilities --json`:
 | Capability | Permitted interface |
 |---|---|
 | features.connect | The user runs `connect` in a real terminal |
-| features.session_id_selection | `list`/`status` return session_id; select a binding with `--session-id` |
+| features.session_id_selection | Session queries return session_id. Select a binding with `--session-id` |
+| features.session_management | `session` lists sessions, `session --session-id ID` shows details, and `session --help` shows management actions |
 | features.ready | Prepare automatically after an explicit handoff |
 | features.takeover | Orchestrate human takeover |
 | features.resume | Orchestrate recovery after human handling |
@@ -17,12 +18,12 @@ Start by checking `capabilities --json`:
 | features.local_menu_help | Press `?` in Agent/recovery mode to open the `connect` menu; in human mode `?` is passed through |
 | features.local_reconnect | Explicit reconnect in the same window after connection end, with a new ID and reused display name |
 | features.command_display | Separate command-display frames from the current helper; do not change execution results |
-| features.connection_reuse | Return a live connection by SSH entry/explicit name; use `--new` to create another |
-| features.session_history | Read-only status/request queries for old IDs; use `list --history` |
+| features.connection_reuse | Reopen an existing session with `connect` or an explicit session ID or name |
+| features.session_history | Read-only session and request queries for old IDs. Use `session --history` |
 | features.local_access_diagnostics | `doctor` checks directories/socket/process; permission denial is not reported as disconnection |
 | features.exec | Execute authorized non-interactive commands |
 
-The tool generates the session_id when `connect` creates a local binding, persists it, and displays it in the local view banner (advanced native attach retains its tmux status bar). It matches the ID returned by `list`/`status`. For a single session, the Agent can read it; the user does not need to copy it. Recreating/rebinding a session creates a new ID. Human handoff does not change the ID, but revokes the previous execution confirmation.
+The tool generates the session_id when `connect` creates a local binding, persists it, and displays it in the local view banner (advanced native attach retains its tmux status bar). It matches the ID returned by `session --json`. For a single session, the Agent can read it; the user does not need to copy it. Recreating/rebinding a session creates a new ID. Human handoff does not change the ID, but revokes the previous execution confirmation.
 
 Treat the fields in the table and the options below as subject to the actual CLI. Replace `SESSION_ID` and `EXEC_ID` in examples with the full session ID from the local record and a stable request ID generated for that command.
 
@@ -34,14 +35,14 @@ If there is no shared session yet, ask the user to run this in their real termin
 remote-terminal connect bastion
 ```
 
-Replace `bastion` with the user's existing SSH config alias. Running the command again returns its only live connection; the user chooses only when multiple connections exist for that SSH entry. Use `--new` explicitly to create another connection; do not ask the user to rename it. Closing the window only detaches the view; reopening the same name and SSH entry keeps the ID. Never create an invisible login prompt through a tool call without a TTY. Let the user complete authentication, menus, and target selection, then tell the Agent it can take over. A visible session ID does not mean the user is logged in.
+Replace `bastion` with the user's existing SSH config alias. Each run starts a new connection with its own session ID. Closing the window detaches the view and leaves SSH running. Use `remote-terminal connect` to choose an existing session or `remote-terminal connect --session-id ID` to return directly. Never create an invisible login prompt through a tool call without a TTY. Let the user complete authentication, menus, and target selection, then tell the Agent it can take over. A visible session ID does not mean the user is logged in.
 
 ## Prepare after explicit handoff
 
-Get the session_id from `list` when there is one session; ask the user to choose when there are multiple candidates. Operate on this full ID; do not ask the user for a hostname:
+Get the session_id from `session --json` when there is one session; ask the user to choose when there are multiple candidates. Operate on this full ID; do not ask the user for a hostname:
 
 ```bash
-remote-terminal status --session-id SESSION_ID --json
+remote-terminal session --session-id SESSION_ID --json
 remote-terminal ready --session-id SESSION_ID --confirm --json
 ```
 

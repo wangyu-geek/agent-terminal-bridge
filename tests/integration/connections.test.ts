@@ -50,22 +50,25 @@ async function open(
     new Response(p.stderr).text(),
   ])
   if (code !== 0) throw new Error(stdout + stderr)
-  const result = JSON.parse(stdout)
-  for (const binding of result.bindings) f.sockets.add(binding.socketPath)
-  return result.bindings as Awaited<ReturnType<Fixture["binding"]>>[]
+  const { binding } = JSON.parse(stdout) as {
+    binding: Awaited<ReturnType<Fixture["binding"]>>
+  }
+  f.sockets.add(binding.socketPath)
+  return binding
 }
 async function ended(f: Fixture, name: string) {
   const b = await f.binding(name)
   process.kill(b.panePid, "SIGKILL")
   const deadline = performance.now() + 3000
   while (
-    (await f.cli(["status", "--session", name, "--json"])).result
+    (await f.cli(["session", "status", "--session", name, "--json"])).result
       .display_state !== "connection_ended"
   ) {
     if (performance.now() > deadline)
       throw new Error(
         JSON.stringify(
-          (await f.cli(["status", "--session", name, "--json"])).result,
+          (await f.cli(["session", "status", "--session", name, "--json"]))
+            .result,
         ),
       )
     await Bun.sleep(15)
@@ -74,49 +77,50 @@ async function ended(f: Fixture, name: string) {
 }
 
 integration(
-  "SSH entry reuse, explicit new, named return and multiple candidates preserve identities",
+  "unnamed connections get distinct identities, and an explicit name can reopen only the same SSH entry",
   async () => {
     const f = await fixture()
     await f.cli(["start", "--json"])
     const legacy = await f.binding()
-    const [first] = await open(f, "entry-one")
-    if (!first) throw new Error("Missing connection")
+    const first = await open(f, "entry-one")
     expect(first.alias).toBe("entry-one")
     expect(first.id).not.toBe(legacy.id)
-    expect((await open(f, "entry-one"))[0]?.id).toBe(first.id)
-    expect((await open(f, "entry-one", "entry-one"))[0]?.panePid).toBe(
+    const second = await open(f, "entry-one")
+    expect(second.alias).toBe("entry-one-2")
+    expect(second.id).not.toBe(first.id)
+    expect((await open(f, "entry-one", "entry-one")).panePid).toBe(
       first.panePid,
     )
-    const [second] = await open(f, "entry-one", "", true)
-    if (!second) throw new Error("Missing second connection")
-    expect(second?.alias).toBe("entry-one-2")
-    const candidates = await open(f, "entry-one")
-    expect(new Set(candidates.map((value) => value.id))).toEqual(
-      new Set([first.id, second.id]),
+    await expect(open(f, "entry-one", "entry-one", true)).rejects.toThrow(
+      "already has a live connection",
     )
-    expect((await open(f, "entry-two"))[0]?.alias).toBe("entry-two")
+    expect((await open(f, "entry-two")).alias).toBe("entry-two")
     await expect(open(f, "entry-two", "entry-one")).rejects.toThrow(
       "another or unknown SSH",
     )
-    const [dotted] = await open(f, "entry.one")
-    expect(dotted?.alias).toBe("entry-one-3")
-    expect(dotted?.id).not.toBe(first.id)
-    expect((await open(f, "entry.one"))[0]?.id).toBe(dotted?.id)
+    const dotted = await open(f, "entry.one")
+    expect(dotted.alias).toBe("entry-one-3")
+    expect(dotted.sshAlias).toBe("entry.one")
+    expect((await open(f, "entry.one", dotted.alias)).id).toBe(dotted.id)
     expect((await f.binding()).id).toBe(legacy.id)
   },
   15000,
 )
 
 integration(
-  "concurrent connect calls converge on one current SSH binding",
+  "concurrent connect calls allocate distinct names and SSH bindings for the same entry",
   async () => {
     const f = await fixture()
     const [a, b] = await Promise.all([
       open(f, "entry-one"),
       open(f, "entry-one"),
     ])
-    expect(a[0]?.id).toBe(b[0]?.id)
-    expect((await f.cli(["list", "--json"])).result.sessions).toHaveLength(1)
+    expect(a.id).not.toBe(b.id)
+    expect(a.panePid).not.toBe(b.panePid)
+    expect(new Set([a.alias, b.alias])).toEqual(
+      new Set(["entry-one", "entry-one-2"]),
+    )
+    expect((await f.cli(["list", "--json"])).result.sessions).toHaveLength(2)
   },
   15000,
 )
@@ -125,8 +129,7 @@ integration(
   "ended names are reused while old unknown history stays queryable and read-only",
   async () => {
     const f = await fixture()
-    const [first] = await open(f, "entry-one")
-    if (!first) throw new Error("Missing connection")
+    const first = await open(f, "entry-one")
     await f.untilCapture(
       (output) => output.includes("fixture-ready>"),
       first.alias,
@@ -171,9 +174,9 @@ integration(
     } finally {
       await gate.release()
     }
-    const [next] = await open(f, "entry-one", first.alias)
-    expect(next?.alias).toBe(first.alias)
-    expect(next?.id).not.toBe(first.id)
+    const next = await open(f, "entry-one", first.alias)
+    expect(next.alias).toBe(first.alias)
+    expect(next.id).not.toBe(first.id)
     const history = await f.cli([
       "request",
       "--session-id",
@@ -188,7 +191,7 @@ integration(
       recovered: false,
     })
     expect(
-      (await f.cli(["status", "--session-id", first.id, "--json"])).result,
+      (await f.cli(["session", "--session-id", first.id, "--json"])).result,
     ).toMatchObject({
       binding: "archived",
       display_state: "archived",
@@ -227,14 +230,13 @@ integration(
   "history lookup rejects a non-private or symlinked parent instead of following it",
   async () => {
     const f = await fixture()
-    const [first] = await open(f, "entry-one")
-    if (!first) throw new Error("Missing connection")
+    const first = await open(f, "entry-one")
     await ended(f, first.alias)
     await open(f, first.alias, "", false, "archive")
     const history = join(f.statePath, "history")
     await chmod(history, 0o755)
     expect(
-      (await f.cli(["status", "--session-id", first.id, "--json"])).result
+      (await f.cli(["session", "--session-id", first.id, "--json"])).result
         .error,
     ).toMatchObject({ code: "UNSAFE_PATH" })
     await chmod(history, 0o700)
@@ -243,7 +245,7 @@ integration(
     await symlink(saved, history)
     try {
       expect(
-        (await f.cli(["status", "--session-id", first.id, "--json"])).result
+        (await f.cli(["session", "--session-id", first.id, "--json"])).result
           .error,
       ).toMatchObject({ code: "UNSAFE_PATH" })
     } finally {
@@ -251,7 +253,7 @@ integration(
       await rename(saved, history)
     }
     expect(
-      (await f.cli(["status", "--session-id", first.id, "--json"])).result
+      (await f.cli(["session", "--session-id", first.id, "--json"])).result
         .binding,
     ).toBe("archived")
   },
@@ -262,24 +264,23 @@ integration(
   "archive-before-name-release crash copies and archive-before-create gaps retain old IDs",
   async () => {
     const f = await fixture()
-    const [first] = await open(f, "entry-one")
-    if (!first) throw new Error("Missing connection")
+    const first = await open(f, "entry-one")
     await ended(f, first.alias)
     await mkdir(join(f.statePath, "history"), { mode: 0o700 })
     await writeAtomic(join(f.statePath, "history", `${first.id}.json`), first)
     // Simulate a persisted history copy with the old active index still present.
     await open(f, first.alias, "", false, "archive")
     expect(
-      (await f.cli(["status", "--session-id", first.id, "--json"])).result
+      (await f.cli(["session", "--session-id", first.id, "--json"])).result
         .binding,
     ).toBe("archived")
     expect((await f.cli(["list", "--json"])).result.sessions).toEqual([])
     // A later creation reuses the display name without making the old ID writable.
-    const [next] = await open(f, "entry-one")
-    expect(next?.alias).toBe(first.alias)
-    expect(next?.id).not.toBe(first.id)
+    const next = await open(f, "entry-one")
+    expect(next.alias).toBe(first.alias)
+    expect(next.id).not.toBe(first.id)
     expect(
-      (await f.cli(["status", "--session-id", first.id, "--json"])).result
+      (await f.cli(["session", "--session-id", first.id, "--json"])).result
         .binding,
     ).toBe("archived")
   },

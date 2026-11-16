@@ -92,7 +92,7 @@ integration(
     const error = new Response(owner.stderr).text()
     try {
       await waitFor(async () =>
-        (await f.cli(["status", "--json"])).stdout.includes(
+        (await f.cli(["session", "status", "--json"])).stdout.includes(
           '"state":"running"',
         ),
       )
@@ -132,7 +132,7 @@ integration(
     const error = new Response(owner.stderr).text()
     try {
       await waitFor(async () =>
-        (await f.cli(["status", "--json"])).stdout.includes(
+        (await f.cli(["session", "status", "--json"])).stdout.includes(
           '"state":"running"',
         ),
       )
@@ -158,7 +158,9 @@ integration(
         recovery_required: true,
       })
       expect(await error).toBe("")
-      expect((await f.cli(["status", "--json"])).result.control).toBe("human")
+      expect(
+        (await f.cli(["session", "status", "--json"])).result.control,
+      ).toBe("human")
     } finally {
       if (owner.exitCode === null) owner.kill("SIGKILL")
       await owner.exited

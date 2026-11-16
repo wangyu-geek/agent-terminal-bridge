@@ -55,7 +55,12 @@ integration(
     )
     await chmod(executable, 0o755)
     f.env.PATH = `${bin}:${f.env.PATH}`
-    const status = await f.cli(["status", "--session-id", binding.id, "--json"])
+    const status = await f.cli([
+      "session",
+      "--session-id",
+      binding.id,
+      "--json",
+    ])
     expect(status.code).toBe(5)
     expect(status.result).toMatchObject({
       binding: "unverified",
@@ -130,9 +135,14 @@ sandbox(
         throw new Error(`Sandbox helper failed: ${err}`)
       return { code, result: JSON.parse(out) }
     }
-    const before = await f.cli(["status", "--session-id", binding.id, "--json"])
+    const before = await f.cli([
+      "session",
+      "--session-id",
+      binding.id,
+      "--json",
+    ])
     expect(before.result.binding).toBe("valid")
-    const denied = await run("status")
+    const denied = await run("session")
     expect(denied.code).toBe(5)
     expect(denied.result).toMatchObject({
       binding: "unverified",
@@ -156,7 +166,7 @@ sandbox(
       ready_for_session: true,
     })
     expect(
-      (await f.cli(["status", "--session-id", binding.id, "--json"])).result
+      (await f.cli(["session", "--session-id", binding.id, "--json"])).result
         .binding,
     ).toBe("valid")
   },

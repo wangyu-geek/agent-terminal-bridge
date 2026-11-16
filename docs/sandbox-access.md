@@ -22,13 +22,13 @@ State defaults to `XDG_STATE_HOME/agent-terminal-bridge`, or `~/.local/state/age
 
 Before the first connection, when no state directory exists yet, regular `doctor` reports `missing` and does not create the directory or treat it as a local I/O failure. Specifying a session_id that has not been registered returns `INVALID_BINDING` (exit code 4).
 
-`LOCAL_ACCESS_DENIED` returns exit code 5. `status` returns `binding=unverified`, `display_state=access_denied`, and the `inspect_local_access` action; if a local check cannot complete, it may return `inspection_failed`. Only an object that is genuinely missing or exited enters the connection-ended flow. Permission errors must not cause state deletion, unbinding, task replay, or a new SSH connection.
+`LOCAL_ACCESS_DENIED` returns exit code 5. `session --session-id ID` returns `binding=unverified`, `display_state=access_denied`, and the `inspect_local_access` action; if a local check cannot complete, it may return `inspection_failed`. Only an object that is genuinely missing or exited enters the connection-ended flow. Permission errors must not cause state deletion, unbinding, task replay, or a new SSH connection.
 
 ## Per-command authorization integration
 
 1. Keep the host's existing sandbox and run `doctor` first for the already selected session_id.
 2. Ask the host to authorize the state directory, specific socket, and process checks required by this Bridge invocation. The actual command must remain within the task authorized by the user. Hosts that support per-command approval can approve this invocation without switching the entire Agent session to global Full Access.
-3. Run `doctor` and read-only `status` again; confirm the failed checks are resolved before calling `ready`/`exec`. If required access is unavailable, stop and preserve the binding and request history.
+3. Run `doctor` and inspect the same ID with `session --session-id ID` again. Confirm the failed checks are resolved before calling `ready` or `exec`. If required access is unavailable, stop and preserve the binding and request history.
 
 Host versions, administrative policies, and execution interfaces may limit authorization granularity. Do not promise that every sandbox can grant these capabilities through the same configuration, and Bridge does not automatically change host settings. OpenAI's [permissions and approvals guide](https://learn.chatgpt.com/docs/agent-approvals-security) distinguishes command sandbox, network, and approval boundaries; the [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) describes file and Unix socket permission options.
 

@@ -96,9 +96,7 @@ export class Sessions {
         requireValue(
           !occupied.has(name),
           "SESSION_CONFLICT",
-          msg(
-            "error.this_display_name_is_occupied_return_to_it_explicitly_or_use_new_without_session",
-          ),
+          msg("error.connection_name_occupied"),
           4,
         )
       else {

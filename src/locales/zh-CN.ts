@@ -14,15 +14,18 @@ export const zhCN = {
   "error.use_either_session_id_or_session_not_both":
     "请使用 --session-id 或 --session，不能同时使用",
   "error.connect_is_interactive_use_list_status_json_for_inspection":
-    "connect 为交互命令；请使用 list/status --json 检查状态",
+    "connect 为交互命令。请使用 session --json 检查会话。",
+  "error.session_list_selector":
+    "查看单个会话请运行 session status，并使用 --session-id ID 或 --session NAME。",
+  "error.session_management_selector":
+    "请使用 --session-id ID 或 --session NAME 指定要管理的会话。",
   "error.connect_requires_a_real_terminal_run_remote_terminal_connect_ssh_alias_there":
     "connect 需要真实终端；请在本机终端运行 remote-terminal connect SSH_ALIAS",
   "error.new_requires_an_ssh_entry_alias": "--new 需要指定 SSH 入口别名",
   "error.connect_selector_conflict":
-    "请使用 connect --session-id 返回指定会话，或使用 connect SSH_ALIAS 选择该入口的连接",
+    "请使用 connect --session-id ID 返回指定会话，或使用 connect SSH_ALIAS 新建连接",
   "error.local_setup_lock_ownership_cannot_be_verified_controlled_maintenance_is_required":
     "无法核实本地初始化锁的所有者；需要受控维护",
-  "error.no_connection_was_selected": "未选择连接",
   "error.choose_a_listed_session_number": "请选择列表中的会话编号",
   "error.pane_cannot_expand_a_registered_binding":
     "--pane 不能扩大已登记绑定的范围",
@@ -64,8 +67,8 @@ export const zhCN = {
   "error.must_be_absolute": "{name} 必须为绝对路径",
   "error.connection_entry_conflict":
     "此名称属于其他或未知 SSH 入口；请不带 SSH 参数返回该会话，或省略 --session 创建独立连接",
-  "error.that_name_already_has_a_live_connection_omit_session_with_new_to_create_another":
-    "此名称已有存活连接；请省略 --session 并使用 --new 新建连接",
+  "error.live_connection_name_conflict":
+    "此名称已有存活连接。省略 --session 可新建连接并自动命名。",
   "error.the_old_connection_name_now_identifies_another_session_select_the_new_id_explicitly":
     "旧连接名称已指向另一个会话；请明确选择新 ID",
   "error.this_session_has_no_managed_ssh_entry_to_reconnect":
@@ -189,8 +192,8 @@ export const zhCN = {
     "会话名称已登记；请明确选择该会话或使用新的 --session 名称",
   "error.local_openssh_is_required_for_a_new_connection":
     "新建连接需要本地 OpenSSH",
-  "error.this_display_name_is_occupied_return_to_it_explicitly_or_use_new_without_session":
-    "此显示名称已被占用；请明确返回该会话，或省略 --session 并使用 --new",
+  "error.connection_name_occupied":
+    "此显示名称已被占用。请明确选择该会话，或省略 --session 新建连接。",
   "error.session_changed_before_archival": "归档前会话发生变化",
   "error.a_live_connection_cannot_be_retired_to_reuse_its_name":
     "不能归档存活连接以复用名称",
@@ -257,7 +260,7 @@ export const zhCN = {
   "error.no_shared_session_exists_run_remote_terminal_connect_ssh_alias_in_a_real_terminal":
     "没有共享会话；请在真实终端运行 remote-terminal connect SSH_ALIAS",
   "error.multiple_sessions_exist_select_a_session_id_from_remote_terminal_list":
-    "存在多个会话；请从 remote-terminal list 中选择 session_id",
+    "存在多个会话。请从 remote-terminal session 中选择 session_id。",
   "error.no_shared_session_exists": "没有共享会话",
   "error.unsupported_binding_schema": "不支持此绑定 schema",
   "error.invalid_tmux_identity": "tmux 身份无效",
@@ -341,10 +344,19 @@ export const zhCN = {
     "请接管并检查终端后再使用 resume",
   "language.invalid": "language 必须为 auto、en 或 zh-CN",
   "help.title": "remote-terminal — 你与 Agent 的共享终端",
-  "help.connect":
-    "  connect SSH_ALIAS   返回该入口的连接，或新建连接并手工登录",
-  "help.return": "  connect             返回已有共享终端",
-  "help.status": "  status              查看当前状态及下一步",
+  "help.connect": "  connect SSH_ALIAS   新建 SSH 会话并手工登录",
+  "help.return":
+    "  connect             返回已有会话，可用 --session-id ID 直接选择",
+  "help.session": "  session             查看和管理会话，详见 session --help",
+  "help.session_title": "remote-terminal session — 管理共享会话",
+  "help.session_list": "  session [list] [--history]          列出会话及状态",
+  "help.session_status":
+    "  session [status] --session-id ID    查看指定会话状态",
+  "help.session_stop": "  session stop --session-id ID        停止受管理会话",
+  "help.session_unbind":
+    "  session unbind --session-id ID      解除绑定，终端继续运行",
+  "help.session_options":
+    "也可用 --session NAME 按名称选择。停止和解绑需要确认。使用 --json 获取机器输出。",
   "help.takeover": "  takeover            接回输入控制权",
   "help.resume": "  resume              检查 shell 后继续",
   "help.handoff": "登录后告诉 Agent：登录已完成，请接管共享终端执行我的任务。",
@@ -383,14 +395,14 @@ export const zhCN = {
   "next.local_access":
     "运行 remote-terminal doctor --session-id ID。为本次调用授予报告中所需的本地 Bridge 资源访问权限，再重新检查。",
   "next.archived":
-    "使用此历史 session_id 查询旧请求；终端操作请通过 list 选择当前连接。",
+    "使用此历史 session_id 查询旧请求。请运行 remote-terminal session 查找当前会话。",
   "next.tty": "打开真实的本机终端，运行 remote-terminal connect SSH_ALIAS。",
   "next.dependencies_mac":
     "检查本地 Bun/tmux/OpenSSH。必要时运行 brew install tmux；独立二进制已包含 Bun。",
   "next.dependencies_linux":
     "检查本地 Bun/tmux/OpenSSH。Debian/Ubuntu 请安装 tmux 和 openssh-client；独立二进制已包含 Bun。",
   "next.select":
-    "运行 connect SSH_ALIAS 返回该入口的连接，使用 list 选择精确 session_id，或通过 connect SSH_ALIAS --new 新建连接。",
+    "运行 connect 选择已有会话，使用 connect --session-id ID 直接返回，或运行 connect SSH_ALIAS 新建连接。",
   "next.resume": "请让 Agent 将此会话交回人工接管；检查后确认 resume。",
   "next.busy": "继续输入前请检查状态；不要重复执行结果未知的命令。",
   "next.lock":

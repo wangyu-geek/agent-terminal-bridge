@@ -190,7 +190,7 @@ skill 负责识别“共享终端”“session_id”和共享终端上下文中�
 
 当前接口返回 `features.connect`、`features.session_id_selection`、`features.ready`、`features.takeover`、`features.resume` 能力字段。skill 仅使用当前 CLI 的 session_id 流程；先检查本次操作所需能力与帮助，缺失时停止并提示更新 CLI，不维护旧版兼容分支。
 
-主帮助展示 connect、session、takeover 和 resume。ready、exec、request 放在 Agent 集成说明，bind、send、recover-lock 等留在高级参考。会话查询和管理集中在 `session --help`。
+主帮助展示 connect、session、takeover 和 resume，并按描述、用法、参数、选项、全局选项、子命令、说明分组；`<command> --help` 展示单条命令的用法与选项。ready、exec、request 放在 Agent 集成说明，bind、send、recover-lock 等留在高级参考。会话查询和管理集中在 `session --help` 与 `session list --help`。
 
 `connect` 的明确规则：
 

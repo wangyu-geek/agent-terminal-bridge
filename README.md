@@ -85,6 +85,10 @@ While the Agent is working, press **?**, then **t** to take over, or press **Ctr
 
 If the SSH connection ends, press **r** to start a new connection in the same window, then log in and hand over the new session. Bridge does not automatically repeat commands whose result is uncertain.
 
+## Command help
+
+`remote-terminal --help` shows the top-level commands; run `remote-terminal <subcommand> --help` for one command's usage, arguments and flags. Help is grouped as DESCRIPTION, USAGE, ARGUMENTS, FLAGS, GLOBAL FLAGS, SUBCOMMANDS and NOTES. `--help --advanced` lists every command, `session list --help` documents one session action, and `--help --json` returns the same structure for machines.
+
 ## Display language
 
 Bridge provides English and Simplified Chinese. It selects the display language in this order: `--lang`, `defaults.language` in the configuration, then the first nonempty `LC_ALL`, `LC_MESSAGES` or `LANG`. Chinese locales such as `zh_CN.UTF-8` select Simplified Chinese; other languages, `C`/`POSIX` and an unset locale fall back to English. This reads the CLI's environment, not the operating system's graphical language preference.

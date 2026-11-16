@@ -22,9 +22,9 @@ async function fixture() {
 test("help detects the local language and supports manual and persistent overrides", async () => {
   const f = await fixture()
   const english = (await f.cli(["--help"])).stdout
-  expect(english).toContain("shared terminal for you")
+  expect(english).toContain("Shared terminal for you and your Agent")
   expect(english).toContain("Open a new SSH session")
-  expect(english).toContain("Return to an existing session")
+  expect(english).toContain("return to an existing session")
   expect(english).toContain("List and manage sessions")
   f.env.LANG = "zh_CN.UTF-8"
   const chinese = (await f.cli(["--help"])).stdout
@@ -33,10 +33,10 @@ test("help detects the local language and supports manual and persistent overrid
   expect(chinese).toContain("返回已有会话")
   expect(chinese).toContain("查看和管理会话")
   expect((await f.cli(["--help", "--lang", "en"])).stdout).toContain(
-    "shared terminal for you",
+    "Shared terminal for you",
   )
   await f.configure({ schema_version: 1, defaults: { language: "en" } })
-  expect((await f.cli(["--help"])).stdout).toContain("shared terminal for you")
+  expect((await f.cli(["--help"])).stdout).toContain("Shared terminal for you")
   expect((await f.cli(["--help", "--lang", "auto"])).stdout).toContain(
     "你与 Agent 的共享终端",
   )
@@ -44,7 +44,7 @@ test("help detects the local language and supports manual and persistent overrid
   f.env.LC_ALL = "C"
   expect((await f.cli(["--help"])).stdout).toContain("你与 Agent 的共享终端")
   expect((await f.cli(["--help", "--lang=auto"])).stdout).toContain(
-    "shared terminal for you",
+    "Shared terminal for you",
   )
   expect((await f.cli(["unknown"])).stderr).toContain("未知命令")
   expect((await f.cli(["--unknown", "--lang", "zh-CN"])).stderr).toContain(
@@ -119,6 +119,46 @@ test("invalid settings and broken configuration use a usable startup language", 
   expect((await f.cli(["--help", "--lang", "en"])).code).toBe(0)
 })
 
+test("help groups commands into CLI subcommand sections", async () => {
+  const f = await fixture()
+  const root = (await f.cli(["--help", "--lang", "en"])).stdout
+  const sections = [
+    "DESCRIPTION",
+    "USAGE",
+    "GLOBAL FLAGS",
+    "SUBCOMMANDS",
+    "NOTES",
+  ]
+  const positions = sections.map((section) => root.indexOf(section))
+  expect(positions.every((position) => position >= 0)).toBe(true)
+  expect([...positions].sort((left, right) => left - right)).toEqual(positions)
+  expect(root).toContain("remote-terminal <subcommand>")
+  expect(root).not.toMatch(/^ {2}exec\s/m)
+  const advanced = (await f.cli(["--help", "--advanced", "--lang", "en"]))
+    .stdout
+  expect(advanced).toMatch(/^ {2}exec\s/m)
+  const grouped = (await f.cli(["session", "--help", "--lang", "en"])).stdout
+  expect(grouped).toContain(
+    "USAGE\n  remote-terminal session <subcommand> [flags]",
+  )
+  for (const name of ["list", "status", "stop", "unbind"])
+    expect(grouped).toMatch(new RegExp(`^  ${name}\\s`, "m"))
+  const listHelp = (await f.cli(["session", "list", "--help", "--lang", "en"]))
+    .stdout
+  expect(listHelp).toContain("remote-terminal session list [--history]")
+  expect(listHelp).toContain("--history")
+  expect(listHelp).not.toContain("SUBCOMMANDS")
+  const connect = (await f.cli(["connect", "--help", "--lang", "en"])).stdout
+  expect(connect).toContain("remote-terminal connect [SSH_ALIAS] [flags]")
+  expect(connect).toContain("ARGUMENTS")
+  expect(connect).toContain("--new")
+  expect((await f.cli(["help", "session"])).stdout).toContain(
+    "remote-terminal session <subcommand>",
+  )
+  expect((await f.cli(["unknown", "--help"])).stdout).toContain("DESCRIPTION")
+  expect((await f.cli(["-v"])).stdout).toMatch(/0\.1\.0/)
+})
+
 test("JSON help, capabilities and errors are independent of the display language", async () => {
   const f = await fixture()
   for (const args of [
@@ -151,13 +191,19 @@ test("JSON help, capabilities and errors are independent of the display language
   ])
   const localized = await f.cli(["session", "--help", "--lang", "zh-CN"])
   expect(localized.stdout).toContain("查看指定会话状态")
-  expect(localized.stdout).toContain("session stop")
-  expect(localized.stdout).toContain("session unbind")
+  expect(localized.stdout).toContain("停止受管理会话")
+  expect(localized.stdout).toContain("解除绑定，终端继续运行")
+  const connectHelp = (await f.cli(["connect", "--help", "--json"])).result
+  expect(connectHelp).toMatchObject({
+    command: "remote-terminal connect",
+    arguments: [{ name: "SSH_ALIAS string" }],
+    flags: [{ flags: "--new" }],
+  })
 })
 
 test("language flags after the argument terminator are treated as command data", async () => {
   const f = await fixture()
   expect((await f.cli(["--help", "--", "--lang", "zh-CN"])).stdout).toContain(
-    "shared terminal for you",
+    "Shared terminal for you",
   )
 })

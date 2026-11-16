@@ -85,6 +85,10 @@ Agent 工作时，按 **?** 再按 **t** 接管，或按 **Ctrl+]** 打开本地
 
 SSH 连接结束后，按 **r** 可在同一窗口新建连接；重新登录后再将新会话交给 Agent。对于结果不确定的命令，Bridge 不会自动重试。
 
+## 命令帮助
+
+`remote-terminal --help` 展示顶层命令；`remote-terminal <子命令> --help` 展示该命令的用法、参数和选项。帮助按描述、用法、参数、选项、全局选项、子命令、说明分组（英文界面使用 DESCRIPTION、USAGE 等标签）。`--help --advanced` 列出全部命令，`session list --help` 查看单个会话动作，`--help --json` 输出同样结构供机器读取。
+
 ## 显示语言
 
 Bridge 提供英文和简体中文，按以下顺序选择显示语言：`--lang`、配置中的 `defaults.language`，然后读取第一个非空的 `LC_ALL`、`LC_MESSAGES` 或 `LANG`。`zh_CN.UTF-8` 等中文环境使用简体中文；其他语言、`C`/`POSIX` 或未设置的环境回退到英文。检测依据是 CLI 当前环境，不读取操作系统的图形界面语言偏好。

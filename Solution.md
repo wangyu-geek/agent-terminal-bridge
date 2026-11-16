@@ -875,7 +875,7 @@ typecheck 调用 `bun run --bun tsc --noEmit`，使用已安装的锁定版本�
 
 各宿主可使用其支持的说明文件加载以下规则，核心 CLI 不自动识别 Agent 品牌或写入宿主配置：
 
-随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。默认帮助展示 connect、session、takeover 和 resume。完整命令通过 `--help --advanced` 或 JSON 帮助查询。
+随包提供 skills/agent-terminal-bridge/SKILL.md 与自包含 references，安装指引要求启用并确认宿主发现 skill；不支持 skills 的宿主通过 examples/AGENTS.md 路由到同一指引。帮助沿用子命令结构，按描述、用法、参数、选项、全局选项、子命令、说明分组（英文界面使用 DESCRIPTION、USAGE 等标签）。默认展示 connect、session、takeover 和 resume；`--help --advanced` 展示全部命令；`<command> --help` 与 `session <action> --help` 展示该命令的用法和选项；JSON 帮助提供同一分组供 Agent 查询。
 
 skill 仅面向当前 CLI 的 session_id 流程，不维护旧版兼容分支。实际安装缺少本次操作所需能力时，停止并提示更新 CLI；能力与会话权限检查仍然保留。
 

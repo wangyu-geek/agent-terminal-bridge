@@ -1,40 +1,10 @@
+import type { HelpPage } from "./help.ts"
 import { createI18n, type I18n, Message, msg } from "./i18n.ts"
-
-export const MAIN_COMMANDS = ["connect", "session", "takeover", "resume"]
 
 export function humanResult(
   result: object,
   i18n: I18n = createI18n("en"),
 ): string {
-  if ("command" in result && result.command === "remote-terminal session")
-    return [
-      i18n.t("help.session_title"),
-      "",
-      i18n.t("help.session_list"),
-      i18n.t("help.session_status"),
-      i18n.t("help.session_stop"),
-      i18n.t("help.session_unbind"),
-      "",
-      i18n.t("help.session_options"),
-    ].join("\n")
-  if ("commands" in result && Array.isArray(result.commands))
-    return [
-      i18n.t("help.title"),
-      "",
-      i18n.t("help.connect"),
-      i18n.t("help.return"),
-      i18n.t("help.session"),
-      i18n.t("help.takeover"),
-      i18n.t("help.resume"),
-      "",
-      i18n.t("help.handoff"),
-      i18n.t("help.controls"),
-      i18n.t("help.advanced"),
-      i18n.t("help.language"),
-      ...("advanced" in result && result.advanced
-        ? ["", i18n.t("help.all", { commands: result.commands.join(", ") })]
-        : []),
-    ].join("\n")
   if ("sessions" in result && Array.isArray(result.sessions))
     return result.sessions.length
       ? result.sessions
@@ -168,4 +138,63 @@ export function errorNextStep(code: string): Message {
   if (code === "LOCK_OWNER_UNKNOWN") return msg("next.lock")
   if (code === "STATE_ERROR") return msg("next.state")
   return msg("next.error")
+}
+
+function table(
+  title: string,
+  rows: readonly (readonly [string, string])[],
+): string {
+  const width = Math.max(...rows.map(([left]) => left.length))
+  return [
+    title,
+    ...rows.map(([left, right]) => `  ${left.padEnd(width)}  ${right}`),
+  ].join("\n")
+}
+
+export function renderHelp(page: HelpPage, i18n: I18n): string {
+  const blocks = [
+    `${i18n.t("help.section.description")}\n  ${i18n.text(page.description)}`,
+    `${i18n.t("help.section.usage")}\n  ${page.usage}`,
+  ]
+  if (page.arguments.length)
+    blocks.push(
+      table(
+        i18n.t("help.section.arguments"),
+        page.arguments.map((argument) => [
+          argument.name,
+          i18n.text(argument.description),
+        ]),
+      ),
+    )
+  if (page.flags.length)
+    blocks.push(
+      table(
+        i18n.t("help.section.flags"),
+        page.flags.map((flag) => [flag.flags, i18n.text(flag.description)]),
+      ),
+    )
+  blocks.push(
+    table(
+      i18n.t("help.section.global_flags"),
+      page.globalFlags.map((flag) => [flag.flags, i18n.text(flag.description)]),
+    ),
+  )
+  if (page.subcommands.length)
+    blocks.push(
+      table(
+        i18n.t("help.section.subcommands"),
+        page.subcommands.map((command) => [
+          command.name,
+          i18n.text(command.description),
+        ]),
+      ),
+    )
+  if (page.notes.length)
+    blocks.push(
+      [
+        i18n.t("help.section.notes"),
+        ...page.notes.map((note) => `  ${i18n.text(note)}`),
+      ].join("\n"),
+    )
+  return blocks.join("\n\n")
 }

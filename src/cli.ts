@@ -9,6 +9,13 @@ import { diagnose } from "./diagnostics.ts"
 import { accessDenied, BridgeError, requireValue } from "./errors.ts"
 import { Executor, resultExitCode } from "./executor.ts"
 import {
+  BASE_COMMANDS,
+  commandOptions,
+  helpPage,
+  helpResult,
+  SESSION_ACTIONS,
+} from "./help.ts"
+import {
   createI18n,
   detectLanguage,
   type I18n,
@@ -20,7 +27,7 @@ import {
 import { inspectDirectoryLock, recoverDirectoryLock } from "./locking.ts"
 import { OPERATIONS } from "./models.ts"
 import { sanitizeText } from "./output.ts"
-import { errorNextStep, humanResult } from "./presentation.ts"
+import { errorNextStep, humanResult, renderHelp } from "./presentation.ts"
 import { requireBun } from "./runtime.ts"
 import { Sessions } from "./session.ts"
 import { State } from "./state.ts"
@@ -33,7 +40,7 @@ const OPTIONS = {
   lang: { type: "string" },
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
-  version: { type: "boolean" },
+  version: { type: "boolean", short: "v" },
   config: { type: "string" },
   session: { type: "string" },
   "session-id": { type: "string" },
@@ -60,32 +67,6 @@ const OPTIONS = {
   takeover: { type: "boolean" },
 } as const
 const COMMON = ["lang", "json", "help", "config", "session", "session-id"]
-const SESSION_ACTIONS = ["list", "status", "stop", "unbind"] as const
-const COMMAND_OPTIONS: Record<string, string[]> = {
-  doctor: [],
-  capabilities: [],
-  connect: ["new"],
-  session: [],
-  ready: ["confirm", "expected-host", "timeout"],
-  takeover: ["confirm", "timeout"],
-  resume: ["confirm", "expected-host", "timeout"],
-  start: ["ssh"],
-  bind: ["socket", "pane", "permissions", "confirm"],
-  unbind: ["confirm"],
-  list: ["history"],
-  capture: ["lines", "screen", "pane"],
-  send: ["raw", "text", "enter", "pane"],
-  attach: ["writable"],
-  handoff: ["to", "confirm", "takeover", "request-id"],
-  stop: ["confirm"],
-  "recover-lock": ["scope", "confirm"],
-  "shell-init": [],
-  "confirm-shell": ["confirm", "expected-host", "timeout"],
-  exec: ["request-id", "command-stdin", "timeout", "pane"],
-  request: ["request-id"],
-  recover: ["request-id", "confirm"],
-  interrupt: ["request-id", "confirm"],
-}
 
 export function capabilities() {
   return {
@@ -172,41 +153,31 @@ export async function main(args: string[]): Promise<number> {
         if (!(error instanceof BridgeError)) throw error
         // Help stays available when configuration is broken or inaccessible.
       }
-      if (requestedCommand === "session") {
-        emit(
-          {
-            command: "remote-terminal session",
-            version: pkg.version,
-            commands: SESSION_ACTIONS,
-            usage:
-              "remote-terminal session [list|status|stop|unbind] [--session-id ID | --session NAME] [--json]",
-            notes: [
-              "session lists registered sessions; add --history to include archived sessions",
-              "session --session-id ID shows the selected session's status",
-              "stop and unbind require an explicit session and confirmation",
-            ],
-          },
-          json,
+      const path =
+        requestedCommand === "help"
+          ? positionals.slice(1)
+          : positionals.slice(0, 2)
+      const page = helpPage(path, values.advanced ?? false)
+      const commands =
+        page.command === "remote-terminal"
+          ? BASE_COMMANDS
+          : page.command === "remote-terminal session"
+            ? SESSION_ACTIONS
+            : []
+      if (json)
+        console.log(
+          JSON.stringify({
+            schema_version: 1,
+            ok: true,
+            ...helpResult(
+              page,
+              commands,
+              values.advanced ?? false,
+              pkg.version,
+            ),
+          }),
         )
-        return 0
-      }
-      const help = {
-        command: "remote-terminal",
-        version: pkg.version,
-        commands: Object.keys(COMMAND_OPTIONS),
-        advanced: values.advanced ?? false,
-        usage:
-          "remote-terminal <command> [--session-id ID | --session NAME] [--lang auto|en|zh-CN] [--json]",
-        notes: [
-          "connect SSH_ALIAS opens a new connection. Use connect or connect --session-id ID to return to an existing session",
-          "session lists registered sessions. Use session --help to see status and management commands",
-          "start/bind register a pane; authentication remains manual",
-          "raw send is disabled by default; send is not exec",
-          "--confirm acknowledges an explicit management action",
-          "after manual login, ready prepares the selected Bash >=3.2 shell and hands it to the Agent",
-        ],
-      }
-      emit(help, json)
+      else console.log(sanitizeText(renderHelp(page, i18n)))
       return 0
     }
     const config = await loadConfig(values.config)
@@ -223,7 +194,7 @@ export async function main(args: string[]): Promise<number> {
         : undefined
     const command = sessionAction ?? requestedCommand
     const allowed =
-      sessionAction === "status" ? ["pane"] : COMMAND_OPTIONS[command]
+      sessionAction === "status" ? ["pane"] : commandOptions(command)
     requireValue(allowed, "INVALID_INPUT", msg("error.unknown_command"))
     requireValue(
       positionals.length === 1 ||

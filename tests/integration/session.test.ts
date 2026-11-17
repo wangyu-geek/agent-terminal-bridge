@@ -155,6 +155,9 @@ integration(
     expect(
       (await f.cli(["session", "stop", "--confirm", ...target])).code,
     ).toBe(5)
+    expect(
+      (await f.cli(["session", "unbind", "--confirm", "--json"])).code,
+    ).toBe(2)
     expect((await f.cli(["session", "unbind", ...target])).code).toBe(5)
     const unbound = await f.cli([
       "session",

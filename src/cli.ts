@@ -57,14 +57,12 @@ const OPTIONS = {
   writable: { type: "boolean" },
   new: { type: "boolean" },
   history: { type: "boolean" },
-  to: { type: "string" },
   confirm: { type: "boolean" },
   scope: { type: "string" },
   timeout: { type: "string" },
   "request-id": { type: "string" },
   "command-stdin": { type: "boolean" },
   "expected-host": { type: "string" },
-  takeover: { type: "boolean" },
 } as const
 const COMMON = ["lang", "json", "help", "config", "session", "session-id"]
 
@@ -76,7 +74,6 @@ export function capabilities() {
       capture: true,
       raw_send: true,
       exec: true,
-      shell_init: true,
       directory_lock_recovery: true,
       connect: true,
       session_management: true,
@@ -193,8 +190,7 @@ export async function main(args: string[]): Promise<number> {
           )
         : undefined
     const command = sessionAction ?? requestedCommand
-    const allowed =
-      sessionAction === "status" ? ["pane"] : commandOptions(command)
+    const allowed = commandOptions(requestedCommand, sessionAction)
     requireValue(allowed, "INVALID_INPUT", msg("error.unknown_command"))
     requireValue(
       positionals.length === 1 ||
@@ -374,10 +370,7 @@ export async function main(args: string[]): Promise<number> {
             ["ready", "takeover", "resume"].includes(command)
           ? await state.select(undefined, values.session)
           : alias(values.session ?? config.session)
-    if (
-      values["session-id"] &&
-      !["status", "request", "list"].includes(command)
-    )
+    if (values["session-id"] && !["status", "request"].includes(command))
       state.requireActive(await state.load(session))
     if (["ready", "takeover", "resume"].includes(command)) {
       const ended =
@@ -412,33 +405,6 @@ export async function main(args: string[]): Promise<number> {
         msg("error.pane_cannot_expand_a_registered_binding"),
         5,
       )
-    if (command === "shell-init") {
-      const initialized = await executor.initialize(session)
-      if (json) emit(initialized, true)
-      else console.log(initialized.code)
-      return 0
-    }
-    if (command === "confirm-shell") {
-      requireValue(
-        values["expected-host"],
-        "INVALID_INPUT",
-        msg("error.confirm_shell_requires_expected_host"),
-      )
-      await approve(values.confirm, msg("confirm.shell"))
-      emit(
-        await executor.confirmShell(
-          session,
-          values["expected-host"],
-          timeoutSeconds(
-            values.timeout,
-            config.timeoutSeconds,
-            config.maxTimeoutSeconds,
-          ),
-        ),
-        json,
-      )
-      return 0
-    }
     if (command === "exec") {
       requireValue(
         Boolean(values["command-stdin"]) !== (positionals[1] !== undefined),
@@ -565,19 +531,6 @@ export async function main(args: string[]): Promise<number> {
         await sessions.send(session, values.text, values.enter ?? false),
         json,
       )
-      return 0
-    }
-    if (command === "handoff") {
-      const to = choice(values.to, ["human", "agent"], "control owner")
-      await approve(values.confirm, msg("confirm.handoff", { to }))
-      if (values.takeover) {
-        requireValue(
-          to === "human" && values["request-id"],
-          "INVALID_INPUT",
-          msg("error.takeover_requires_to_human_and_request_id"),
-        )
-        emit(await executor.takeover(session, values["request-id"]), json)
-      } else emit(await sessions.handoff(session, to), json)
       return 0
     }
     if (

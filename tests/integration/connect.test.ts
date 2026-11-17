@@ -128,8 +128,8 @@ for (const existingServer of [false, true]) {
       ])
       try {
         await until(async () => {
-          const entries = (await fixture.cli(["list", "--json"])).result
-            .sessions
+          const entries = (await fixture.cli(["session", "list", "--json"]))
+            .result.sessions
           if (!Array.isArray(entries)) return false
           const binding = entries.find((entry) => entry.session === "remote")
           if (!binding) return false
@@ -222,7 +222,7 @@ integration(
   "an abandoned local setup lock is recovered only after one explicit prompt",
   async () => {
     const fixture = await fakeSsh()
-    await fixture.cli(["list", "--json"])
+    await fixture.cli(["session", "list", "--json"])
     const holder = Bun.spawn(
       [
         process.execPath,
@@ -274,15 +274,7 @@ integration(
     const fixture = await fakeSsh()
     expect((await fixture.cli(["start", "--json"])).code).toBe(0)
     const binding = await fixture.binding()
-    const args = [
-      "handoff",
-      "--session-id",
-      binding.id,
-      "--to",
-      "human",
-      "--lang",
-      "zh-CN",
-    ]
+    const args = ["takeover", "--session-id", binding.id, "--lang", "zh-CN"]
     for (const [answer, expected] of [
       ["是", 5],
       ["y", 0],
@@ -290,7 +282,7 @@ integration(
       const owner = terminal(fixture, args)
       try {
         await until(async () => owner.output().includes("[y/N]"))
-        expect(owner.output()).toContain("请确认 shell 输入行为空")
+        expect(owner.output()).toContain("是否将所选终端交回人工控制")
         owner.process.terminal?.write(`${answer}\r`)
         expect(await owner.process.exited).toBe(expected)
         if (expected === 5) expect(owner.output()).toContain("操作未获确认")
@@ -630,7 +622,7 @@ integration(
         owner.output().includes("[r] Reconnect in this window"),
       )
       expect(
-        (await fixture.cli(["list", "--json"])).result.sessions,
+        (await fixture.cli(["session", "list", "--json"])).result.sessions,
       ).toHaveLength(1)
       expect(owner.process.exitCode).toBeNull()
       const reconnectStart = owner.output().length
@@ -638,7 +630,8 @@ integration(
       let nextId = ""
       let nextAlias = ""
       await until(async () => {
-        const entries = (await fixture.cli(["list", "--json"])).result.sessions
+        const entries = (await fixture.cli(["session", "list", "--json"]))
+          .result.sessions
         if (!Array.isArray(entries)) return false
         const next = entries.find((entry) => entry.session_id !== old.id)
         if (!next) return false
@@ -727,7 +720,9 @@ integration(
     expect(await Bun.file(join(fixture.directory, "clipboard")).exists()).toBe(
       false,
     )
-    expect((await fixture.cli(["list", "--json"])).result.sessions).toEqual([])
+    expect(
+      (await fixture.cli(["session", "list", "--json"])).result.sessions,
+    ).toEqual([])
     expect(
       await Bun.file(join(fixture.directory, "ssh-arguments")).exists(),
     ).toBe(false)
@@ -754,7 +749,7 @@ integration(
       )
       expect(owner.output()).toContain(binding.id)
       expect(
-        (await fixture.cli(["list", "--json"])).result.sessions,
+        (await fixture.cli(["session", "list", "--json"])).result.sessions,
       ).toHaveLength(1)
       owner.process.terminal?.write("q")
       expect(await owner.process.exited).toBe(0)
@@ -777,7 +772,8 @@ integration(
     ])
     try {
       await until(async () => {
-        const listed = (await fixture.cli(["list", "--json"])).result.sessions
+        const listed = (await fixture.cli(["session", "list", "--json"])).result
+          .sessions
         return Array.isArray(listed) && listed.length === 1
       })
       const binding = await fixture.binding()
@@ -1016,7 +1012,7 @@ integration(
           `Copied to clipboard: session_id=${created.id}`,
         )
         expect(
-          (await fixture.cli(["list", "--json"])).result.sessions,
+          (await fixture.cli(["session", "list", "--json"])).result.sessions,
         ).toHaveLength(2)
         expect(returned.output()).not.toContain("already exists")
       } finally {

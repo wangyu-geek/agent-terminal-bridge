@@ -8,7 +8,7 @@ After the human completes login/target selection and explicitly hands over an id
 
 The bootstrap line and all chunk lines respect max_input_line_bytes. Every line waits for a remote ACK; tmux acceptance or a fixed sleep is not readiness. The coordinator rechecks binding/client ownership through transfer, probes the installed helper, then atomically commits shell confirmation and Agent control. Bootstrap/chunk/probe/commit failures retain a preparation phase and require inspection if input may have been sent. Transfer is not automatically repeated after unknown results. Source, bundle and native builds embed both bootstrap and helper assets.
 
-Legacy `shell-init` still generates a human-installable helper, and `confirm-shell` still requires an expected hostname. New `ready`/`resume` automatically read hostname/user/cwd and full Bash version; `--expected-host` is optional when the user explicitly wants that extra comparison.
+`ready` and `resume` automatically read hostname/user/cwd and the full Bash version. Use `--expected-host` when the user explicitly requests that extra comparison.
 
 The hostname, user and cwd are reported by the shell, not authenticated independently. Losing the function causes an unknown/rejected outcome; the payload is never decoded or executed by a generic local fallback. There is no prompt-regex detector.
 

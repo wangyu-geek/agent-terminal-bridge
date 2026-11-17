@@ -833,44 +833,6 @@ export class Sessions {
     })
   }
 
-  async handoff(name: string, to: "human" | "agent") {
-    const original = await this.state.load(name)
-    return withLock(this.state.locks, resourceKey(original), async () => {
-      const binding = await this.state.load(name)
-      await this.verify(binding, true)
-      await this.tasks.requireIdle(binding)
-      const tmux = new Tmux(binding.socketPath)
-      const clients = await tmux.clients(binding.sessionId)
-      if (to === "agent") {
-        requireValue(
-          binding.shell.state === "confirmed",
-          "SHELL_CONFIRMATION_REQUIRED",
-          msg(
-            "error.confirm_the_shell_before_handing_execution_control_to_an_agent",
-          ),
-          5,
-        )
-        for (const client of clients.filter((item) => !item.control)) {
-          if (!(client.key in binding.clientFlags))
-            binding.clientFlags[client.key] = client.readonly
-        }
-        // Persist restoration data before changing any interactive client.
-        await this.state.save(binding)
-        for (const client of clients.filter((item) => !item.control)) {
-          if (!client.readonly)
-            await tmux.setReadonly(client.name, true, binding.sessionId)
-        }
-      } else {
-        await this.restoreClients(binding)
-        binding.shell = emptyShell("unknown")
-      }
-      binding.control = to
-      await this.state.save(binding)
-      await this.state.audit("handoff", binding.id, to)
-      return { session: name, control: to }
-    })
-  }
-
   async unbind(name: string) {
     const original = await this.state.load(name)
     return withLock(this.state.locks, resourceKey(original), async () =>

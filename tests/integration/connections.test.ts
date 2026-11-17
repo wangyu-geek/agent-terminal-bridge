@@ -120,7 +120,9 @@ integration(
     expect(new Set([a.alias, b.alias])).toEqual(
       new Set(["entry-one", "entry-one-2"]),
     )
-    expect((await f.cli(["list", "--json"])).result.sessions).toHaveLength(2)
+    expect(
+      (await f.cli(["session", "list", "--json"])).result.sessions,
+    ).toHaveLength(2)
   },
   15000,
 )
@@ -197,13 +199,21 @@ integration(
       display_state: "archived",
       session_id: first.id,
     })
-    expect((await f.cli(["list", "--json"])).result.sessions).toHaveLength(1)
     expect(
-      (await f.cli(["list", "--history", "--json"])).result.sessions,
+      (await f.cli(["session", "list", "--json"])).result.sessions,
+    ).toHaveLength(1)
+    expect(
+      (await f.cli(["session", "list", "--history", "--json"])).result.sessions,
     ).toHaveLength(2)
-    for (const command of ["ready", "takeover", "resume", "stop", "unbind"]) {
+    for (const command of [
+      ["ready"],
+      ["takeover"],
+      ["resume"],
+      ["session", "stop"],
+      ["session", "unbind"],
+    ]) {
       const denied = await f.cli([
-        command,
+        ...command,
         "--session-id",
         first.id,
         "--confirm",
@@ -274,7 +284,9 @@ integration(
       (await f.cli(["session", "--session-id", first.id, "--json"])).result
         .binding,
     ).toBe("archived")
-    expect((await f.cli(["list", "--json"])).result.sessions).toEqual([])
+    expect(
+      (await f.cli(["session", "list", "--json"])).result.sessions,
+    ).toEqual([])
     // A later creation reuses the display name without making the old ID writable.
     const next = await open(f, "entry-one")
     expect(next.alias).toBe(first.alias)

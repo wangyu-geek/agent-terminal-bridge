@@ -7,7 +7,7 @@ Start with `capabilities --json`, `doctor --json`, then `session --session NAME 
 | DEPENDENCY_MISSING | Install local Bun/tmux at the supported versions; Bash/base64 checks occur in the target shell |
 | INVALID_BINDING | Explicitly start a session or bind the exact socket and pane with the user's intended permissions |
 | BINDING_CHANGED / exited pane | Stop automatic writes. In current connect, explicitly press r to create a new connection/ID; preserve old unknown requests and inspect their outcomes before repeating any work |
-| SHELL_CONFIRMATION_REQUIRED | After current explicit handoff to an idle compatible Bash, use ready; after inspection/recovery use resume. Legacy installs retain their manual initialization flow |
+| SHELL_CONFIRMATION_REQUIRED | After an explicit handoff to an idle compatible Bash, use `ready`. After inspection and recovery, use `resume`. |
 | ENDPOINT_MISMATCH | Recheck the selected server; initialize again only after the human verifies the destination |
 | PERMISSION_DENIED | Check both effective permissions and human/Agent control. Raw input additionally needs the global switch |
 | BUSY | Another local writer or a directory lock exists. Do not delete it or resend the command |
@@ -63,9 +63,9 @@ Update the executable and create a new connection with `remote-terminal connect 
 
 ## Unknown execution
 
-If an owner is still alive, use explicit `interrupt --request-id ID --confirm` or `handoff --to human --takeover --request-id ID --confirm`. Interruption is only a request and may not produce a completion frame. Human takeover preserves uncertainty and enables writable attach only after coordination.
+If an owner is still alive, use `interrupt --request-id ID --confirm` to request interruption, or `takeover --session-id ID --confirm` to return input control to the user. Interruption may not produce a completion frame. Human takeover preserves uncertainty and enables writable attach only after coordination.
 
-After the coordinator exits, interruption requests cannot be delivered through that owner. Use takeover (or the current local Ctrl+] menu), inspect and handle the foreground yourself, then confirm resume to the Agent when the shell is idle. resume preserves old unknown history. Legacy recover/manual initialization remain advanced alternatives; neither is an automatic detector that the process stopped.
+After the coordinator exits, use `takeover` or the local Ctrl+] menu. Inspect and handle the foreground yourself, then confirm `resume` to the Agent when the shell is idle. `resume` preserves old unknown history. The advanced `recover` command records manual recovery without preparing the shell.
 
 ## Abandoned locks
 
@@ -81,4 +81,4 @@ Bridge validates a Unix socket and canonicalizes its parent to avoid platform-sp
 
 An external pane still carrying an old Bridge marker is not automatically reassigned. Inspect the old binding and unresolved records before explicitly removing an obsolete marker in tmux. Recreating or respawning a pane invalidates prior process identity even if its `%N` ID remains the same.
 
-Current ready uses acknowledged bounded transfer chunks after explicit handoff. Legacy shell-init remains manual; use normal bracketed paste there. Rapid unbracketed multiline input can overrun a PTY. Automatic preparation tests use real transfer; legacy test fixtures may source a private local helper file.
+`ready` transfers the shell helper in bounded, acknowledged chunks after explicit handoff. If preparation fails after sending input, use `takeover` to inspect the terminal and `resume` after the shell is idle.

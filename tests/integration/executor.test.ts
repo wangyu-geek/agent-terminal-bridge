@@ -157,19 +157,8 @@ integration(
       )
       expect(await readFile(`${f.directory}/finished`, "utf8")).toBe("survived")
       expect(
-        (
-          await f.cli([
-            "handoff",
-            "--to",
-            "human",
-            "--takeover",
-            "--request-id",
-            "timeout",
-            "--confirm",
-            "--json",
-          ])
-        ).code,
-      ).toBe(0)
+        (await f.cli(["takeover", "--confirm", "--json"])).result,
+      ).toMatchObject({ taken_over: true, recovery_required: true })
       expect(
         (await f.cli(["send", "--raw", "--text", "pwd", "--enter", "--json"]))
           .code,
@@ -185,7 +174,7 @@ integration(
           ])
         ).result,
       ).toMatchObject({ execution_state: "unknown", recovery_recorded: true })
-      await f.reinitialize()
+      await f.ready()
       expect(
         (await f.cli(execute("resumed", "printf resumed"))).result
           .terminal_output,

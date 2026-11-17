@@ -29,15 +29,11 @@ export const en = {
   "error.choose_a_listed_session_number": "Choose a listed session number",
   "error.pane_cannot_expand_a_registered_binding":
     "--pane cannot expand a registered binding",
-  "error.confirm_shell_requires_expected_host":
-    "confirm-shell requires --expected-host",
   "error.provide_exactly_one_command_argument_or_command_stdin":
     "Provide exactly one command argument or --command-stdin",
   "error.requires_request_id": "{command} requires --request-id",
   "error.bind_requires_socket_and_pane": "bind requires --socket and --pane",
   "error.send_requires_raw_and_text": "send requires --raw and --text",
-  "error.takeover_requires_to_human_and_request_id":
-    "takeover requires --to human and --request-id",
   "error.attach_is_interactive_and_does_not_support_json":
     "attach is interactive and does not support --json",
   "error.attach_requires_a_real_terminal": "attach requires a real terminal",
@@ -101,15 +97,6 @@ export const en = {
     "The saved terminal identity changed",
   "error.the_saved_tmux_process_identity_changed":
     "The saved tmux process identity changed",
-  "error.initialization_requires_human_control":
-    "Initialization requires human control",
-  "error.an_expected_hostname_is_required": "An expected hostname is required",
-  "error.generate_and_install_shell_initialization_first":
-    "Generate and install shell initialization first",
-  "error.reported_hostname_does_not_match_the_user_confirmed_destination":
-    "Reported hostname does not match the user-confirmed destination",
-  "error.shell_handshake_did_not_complete_inspect_the_session_and_recover":
-    "Shell handshake did not complete; inspect the session and recover",
   "error.command_is_empty_contains_nul_or_exceeds_its_byte_limit":
     "Command is empty, contains NUL or exceeds its byte limit",
   "error.request_id_is_already_associated_with_another_command":
@@ -261,8 +248,6 @@ export const en = {
   "error.raw_input_requires_human_control": "Raw input requires human control",
   "error.input_may_be_partial_inspect_the_terminal_and_explicitly_hand_control_back_to_human":
     "Input may be partial; inspect the terminal and explicitly hand control back to human",
-  "error.confirm_the_shell_before_handing_execution_control_to_an_agent":
-    "Confirm the shell before handing execution control to an Agent",
   "error.external_panes_can_only_be_unbound":
     "External panes can only be unbound",
   "error.invalid_initialization_nonce": "Invalid initialization nonce",
@@ -295,7 +280,7 @@ export const en = {
   "error.session_id_must_be_the_complete_32_character_bridge_id":
     "session_id must be the complete 32-character Bridge ID",
   "error.session_id_is_missing_or_no_longer_registered_inspect_list":
-    "session_id is missing or no longer registered; inspect list",
+    "session_id is missing or no longer registered; inspect session list",
   "error.no_shared_session_exists_run_remote_terminal_connect_ssh_alias_in_a_real_terminal":
     "No shared session exists; run remote-terminal connect SSH_ALIAS in a real terminal",
   "error.multiple_sessions_exist_select_a_session_id_from_remote_terminal_list":
@@ -413,11 +398,8 @@ export const en = {
   "help.command.capture": "Read a terminal snapshot",
   "help.command.send": "Send raw input to the terminal",
   "help.command.attach": "Attach to the shared terminal view",
-  "help.command.handoff": "Hand off terminal input control",
   "help.command.stop": "Stop a managed session",
   "help.command.recover_lock": "Recover a verified leftover lock",
-  "help.command.shell_init": "Print the shell initialization script",
-  "help.command.confirm_shell": "Confirm the target shell is ready",
   "help.command.exec": "Execute one command in the selected session",
   "help.command.request": "Query an existing request",
   "help.command.recover": "Recover a request that ended unexpectedly",
@@ -445,8 +427,6 @@ export const en = {
   "help.flag.text": "Text to send",
   "help.flag.enter": "Append a newline after sending",
   "help.flag.writable": "Request a writable attachment",
-  "help.flag.to": "Control owner",
-  "help.flag.takeover": "Take over the running foreground request",
   "help.flag.request_id": "Request identifier",
   "help.flag.socket": "tmux socket path",
   "help.flag.permissions": "Allowed operations, comma separated",
@@ -536,13 +516,10 @@ export const en = {
     "Return this selected terminal to human control without automatically interrupting its program?",
   "confirm.ready":
     "Login and target selection are complete, prior work is resolved, and this selected shell is idle and ready for the Agent?",
-  "confirm.shell":
-    "Confirm the expected destination and an empty compatible Bash prompt?",
   "confirm.recover":
     "Confirm that you inspected the terminal and resolved the outstanding command?",
   "confirm.interrupt": "Attempt to interrupt the named foreground request?",
   "confirm.bind": "Register this exact external tmux pane?",
-  "confirm.handoff": "Hand control to {to}? Confirm an empty shell input line.",
   "confirm.manage": "Confirm {command} for this registered session?",
   "error.arguments": "Invalid command line arguments",
   "error.local_operation": "Local operation failed",

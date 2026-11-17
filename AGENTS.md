@@ -98,7 +98,7 @@ src 由 Bun 直接运行，scripts/build.ts 构建 Bun-target bundle 到 dist；
 - 外部 pane 不自动认领；不修改用户全局 tmux 配置，不覆盖已有 pipe，不调用 kill-server 清理测试或业务会话。
 - capture 返回终端文本快照，不是截图、不需要多模态模型，也不是严格的命令结果。
 - send 默认关闭，仅在明确授权的人工模式下开放；输入被 tmux 接受不表示命令完成。
-- exec 必须调用目标 shell 内的专用入口；ready 仅在本次用户明确完成登录/目标选择并交接后，在单个资源锁内冻结人工客户端、自动分段传输并验证握手。旧 shell-init 人工入口保留兼容；入口缺失时不能回退为通用脚本或原始输入。
+- exec 必须调用目标 shell 内的专用入口；ready 仅在本次用户明确完成登录/目标选择并交接后，在单个资源锁内冻结人工客户端、自动分段传输并验证握手。入口缺失时不能回退为通用脚本或原始输入。
 - connect SSH_ALIAS 默认新建独立连接并自动分配名称，--new 保留兼容。返回已有会话使用无 SSH 参数的 connect 或精确 --session-id。connect SSH_ALIAS --session NAME 仅可复用匹配入口的显式名称，其他/未知入口冲突时拒绝。
 - 已结束绑定在持有资源锁和注册锁时先持久化 history/<id>.json，再释放名称；旧 ID 仅允许状态/请求元数据查询，不重定向、不确认或重放 unknown。仅按名称访问当前记录；历史只能按完整 ID 选择。
 - session_id 是 Bridge 绑定的公开随机 ID，不是 tmux session ID 或主机身份。用户不必提供 hostname；显式启用高级预期主机检查时才匹配。--session-id 必须精确选择并防止解析后重绑到同名会话。

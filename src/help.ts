@@ -8,8 +8,6 @@ export const MAIN_COMMANDS = [
 ] as const
 export const SESSION_ACTIONS = ["list", "status", "stop", "unbind"] as const
 
-// Accepted options per command. Help renders the same source so that a new
-// option cannot be documented on one command and rejected on another.
 export const BASE_COMMANDS = [
   "doctor",
   "capabilities",
@@ -20,49 +18,18 @@ export const BASE_COMMANDS = [
   "resume",
   "start",
   "bind",
-  "unbind",
-  "list",
   "capture",
   "send",
   "attach",
-  "handoff",
-  "stop",
   "recover-lock",
-  "shell-init",
-  "confirm-shell",
   "exec",
   "request",
   "recover",
   "interrupt",
 ] as const
 type BaseCommand = (typeof BASE_COMMANDS)[number]
-type SessionKey = `session/${(typeof SESSION_ACTIONS)[number]}`
-
-export const COMMAND_OPTIONS: Record<BaseCommand, readonly string[]> = {
-  doctor: [],
-  capabilities: [],
-  connect: ["new"],
-  session: [],
-  ready: ["confirm", "expected-host", "timeout"],
-  takeover: ["confirm", "timeout"],
-  resume: ["confirm", "expected-host", "timeout"],
-  start: ["ssh"],
-  bind: ["socket", "pane", "permissions", "confirm"],
-  unbind: ["confirm"],
-  list: ["history"],
-  capture: ["lines", "screen", "pane"],
-  send: ["raw", "text", "enter", "pane"],
-  attach: ["writable"],
-  handoff: ["to", "confirm", "takeover", "request-id"],
-  stop: ["confirm"],
-  "recover-lock": ["scope", "confirm"],
-  "shell-init": [],
-  "confirm-shell": ["confirm", "expected-host", "timeout"],
-  exec: ["request-id", "command-stdin", "timeout", "pane"],
-  request: ["request-id"],
-  recover: ["request-id", "confirm"],
-  interrupt: ["request-id", "confirm"],
-}
+type SessionAction = (typeof SESSION_ACTIONS)[number]
+type SessionKey = `session/${SessionAction}`
 
 const FLAGS = {
   help: { flags: "--help, -h", description: msg("help.flag.help") },
@@ -96,8 +63,6 @@ const FLAGS = {
   text: { flags: "--text <text>", description: msg("help.flag.text") },
   enter: { flags: "--enter", description: msg("help.flag.enter") },
   writable: { flags: "--writable", description: msg("help.flag.writable") },
-  to: { flags: "--to <human|agent>", description: msg("help.flag.to") },
-  takeover: { flags: "--takeover", description: msg("help.flag.takeover") },
   "request-id": {
     flags: "--request-id <id>",
     description: msg("help.flag.request_id"),
@@ -191,16 +156,6 @@ const COMMANDS: Record<BaseCommand | SessionKey, CommandSpec> = {
     flags: ["socket", "pane", "permissions", "confirm"],
     notes: [msg("help.note.pane")],
   },
-  unbind: {
-    description: msg("help.command.unbind"),
-    usage: "remote-terminal unbind [flags]",
-    flags: ["confirm"],
-  },
-  list: {
-    description: msg("help.command.list"),
-    usage: "remote-terminal list [--history]",
-    flags: ["history"],
-  },
   capture: {
     description: msg("help.command.capture"),
     usage: "remote-terminal capture [flags]",
@@ -217,29 +172,10 @@ const COMMANDS: Record<BaseCommand | SessionKey, CommandSpec> = {
     usage: "remote-terminal attach [--writable]",
     flags: ["writable"],
   },
-  handoff: {
-    description: msg("help.command.handoff"),
-    usage: "remote-terminal handoff --to human|agent [flags]",
-    flags: ["to", "confirm", "takeover", "request-id"],
-  },
-  stop: {
-    description: msg("help.command.stop"),
-    usage: "remote-terminal stop [flags]",
-    flags: ["confirm"],
-  },
   "recover-lock": {
     description: msg("help.command.recover_lock"),
     usage: "remote-terminal recover-lock [--scope SCOPE] [flags]",
     flags: ["scope", "confirm"],
-  },
-  "shell-init": {
-    description: msg("help.command.shell_init"),
-    usage: "remote-terminal shell-init",
-  },
-  "confirm-shell": {
-    description: msg("help.command.confirm_shell"),
-    usage: "remote-terminal confirm-shell --expected-host HOST [flags]",
-    flags: ["confirm", "expected-host", "timeout"],
   },
   exec: {
     description: msg("help.command.exec"),
@@ -321,9 +257,13 @@ function baseCommand(name: string): BaseCommand | undefined {
   return BASE_COMMANDS.find((candidate) => candidate === name)
 }
 
-export function commandOptions(name: string): readonly string[] | undefined {
-  const command = baseCommand(name)
-  return command === undefined ? undefined : COMMAND_OPTIONS[command]
+export function commandOptions(
+  name: string,
+  action?: SessionAction,
+): readonly string[] | undefined {
+  const key: BaseCommand | SessionKey | undefined =
+    action === undefined ? baseCommand(name) : `session/${action}`
+  return key === undefined ? undefined : (COMMANDS[key].flags ?? [])
 }
 
 function subcommand(

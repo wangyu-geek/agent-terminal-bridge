@@ -6,7 +6,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises"
-import { hostname, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { digest, inspectDirectoryLock } from "../src/locking.ts"
 import type { Binding } from "../src/models.ts"
@@ -104,32 +104,21 @@ export class Fixture {
       "--json",
     ])
     if (bound.code !== 0) throw new Error(bound.stdout)
-    return this.reinitialize()
+    return this.ready()
   }
-  async reinitialize() {
-    const generated = await this.cli(["shell-init", "--json"])
-    if (generated.code !== 0 || typeof generated.result.code !== "string")
-      throw new Error(generated.stdout)
+  async ready() {
     const binding = await this.binding()
-    await this.installFixtureCode(binding, generated.result.code)
-    const confirmed = await this.cli([
-      "confirm-shell",
-      "--expected-host",
-      hostname(),
+    const result = await this.cli([
+      "ready",
+      "--session-id",
+      binding.id,
       "--confirm",
       "--timeout",
-      "3",
+      "10",
       "--json",
     ])
-    if (confirmed.code !== 0) throw new Error(confirmed.stdout)
-    const handed = await this.cli([
-      "handoff",
-      "--to",
-      "agent",
-      "--confirm",
-      "--json",
-    ])
-    if (handed.code !== 0) throw new Error(handed.stdout)
+    if (result.code !== 0 || result.result.ready !== true)
+      throw new Error(result.stdout || result.stderr)
     return this.binding()
   }
   async installFixtureCode(binding: Binding, code: string) {

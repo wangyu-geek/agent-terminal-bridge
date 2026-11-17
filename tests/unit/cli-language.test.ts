@@ -181,7 +181,6 @@ test("JSON help, capabilities and errors are independent of the display language
   })
   const rootHelp = (await f.cli(["--help", "--json"])).result
   expect(rootHelp.commands).toContain("session")
-  expect(rootHelp.commands).not.toContain("status")
   const sessionHelp = await f.cli(["session", "--help", "--json"])
   expect(sessionHelp.result.commands).toEqual([
     "list",

@@ -167,12 +167,9 @@ flowchart TD
 | start | 创建受管理 tmux 会话及单一目标 pane | 1 |
 | bind | 显式登记一个已有 pane 的绑定 | 1 |
 | attach | 在真实终端中进入会话，默认只读观察 | 1 |
-| handoff | 显式交接人工和 Agent 控制权 | 1 |
 | capture | 获取有界的终端文本快照 | 1 |
 | send | 人工控制模式下的显式原始输入 | 1 |
 | recover-lock | 显式处理已确认失去持有者的本地目录锁，不恢复远端执行权限 | 1 |
-| shell-init | 生成供用户在目标 shell 中粘贴的初始化代码 | 2 |
-| confirm-shell | 在人工确认的提示符状态下验证初始化响应 | 2 |
 | exec | 执行受限的非交互命令 | 2 |
 | request | 查询已有请求记录，不重新发送命令 | 2 |
 | recover | 保留历史记录并完成显式恢复 | 2 |
@@ -180,7 +177,7 @@ flowchart TD
 
 文中列出的是目标接口。尚未实现的子命令不得由 capabilities 声称可用，也不得提前写入可执行的 Agent 使用示例。
 
-`session` 和 `session list` 列出当前会话，`--history` 同时列出已归档会话。`session --session-id ID` 与 `session status --session-id ID` 查看同一份详情，也可用 `--session NAME` 选择。无选择器的 `session status` 仅在恰有一个会话时查询它。`session stop` 和 `session unbind` 需要显式选择会话并确认，沿用原有授权、锁及请求约束。原顶层 `status` 迁移到 `session status`。顶层 `list`、`stop` 和 `unbind` 继续为既有调用方提供原入口。
+`session` 和 `session list` 列出当前会话，`--history` 同时列出已归档会话。`session --session-id ID` 与 `session status --session-id ID` 查看同一份详情，也可用 `--session NAME` 选择。无选择器的 `session status` 仅在恰有一个会话时查询它。`session stop` 和 `session unbind` 需要显式选择会话并确认，沿用原有授权、锁及请求约束。
 
 ### 4.2 参数约定
 
@@ -191,7 +188,7 @@ flowchart TD
 - `--json`：机器接口模式，见第 10 节。
 - `--lang auto|en|zh-CN`：选择本次调用的人工界面语言；显式 auto 覆盖持久配置并重新检测当前环境。不支持的手动语言值返回参数错误。
 - `--timeout <seconds>`：有限的操作截止时间，必须为正数且有上限。
-- 当前实现中 --timeout 用于 exec、confirm-shell、ready、takeover 与 resume；其余本地 tmux 子步骤有独立的有限超时，不将该参数静默忽略。
+- 当前实现中 --timeout 用于 exec、ready、takeover 与 resume；其余本地 tmux 子步骤有独立的有限超时，不将该参数静默忽略。
 - `--request-id <id>`：exec 的调用方幂等标识，用于查找既有记录，不构成远端重试保证。
 
 会话别名限制为 1–64 个 ASCII 字母、数字、下划线或连字符；request_id 限制为 1–128 个 ASCII 字母、数字、点、下划线或连字符。内部文件名使用规范化资源键及哈希，不直接将外部标识拼进路径。capture 的 lines 范围为 1–10000；时间参数必须为有限正数，不接受 NaN 或无穷大。
@@ -202,7 +199,6 @@ Agent 的正常执行路径使用 exec。send 不作为 exec 尚未实现时的�
 
 ```bash
 remote-terminal start --session remote
-remote-terminal handoff --session remote --to human
 remote-terminal attach --session remote --writable
 ```
 
@@ -403,7 +399,7 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 
 仅向终端注入“开始标记 + 任意命令 + 结束标记”，即使原来位于远端，也可能在 SSH 退出后落到本地 shell 中执行。
 
-因此 exec 必须依赖在所选目标 shell 中准备好的临时函数。ready 仅在用户明确完成登录/目标选择并交接空闲 shell 后自动安装；旧 shell-init 人工流程保留。初始化只定义当前 Bash 进程内的函数和状态，不写 shell 启动文件，不安装远端软件包或后台服务。
+因此 exec 必须依赖在所选目标 shell 中准备好的临时函数。ready 仅在用户明确完成登录/目标选择并交接空闲 shell 后自动安装。初始化只定义当前 Bash 进程内的函数和状态，不写 shell 启动文件，不安装远端软件包或后台服务。
 
 专用函数名称包含随机绑定标识，例如 `__atb_<binding_nonce>`，不导出给子进程。远端 shell 消失后，本地 shell 或新会话通常没有该函数，原执行载荷不会直接作为命令运行。
 
@@ -418,8 +414,6 @@ Phase 1 的 send 是显式低层能力，不提供命令完成或远端并发保
 5. 只向专用 helper 发送新鲜 probe，验证协议字节、完整 Bash 版本和必要能力，读取 hostname/user/cwd。
 6. session_id 选择用户交接的本地共享会话；hostname 默认是 shell 自报展示信息，不要求用户填写。明确使用 --expected-host 时才进行额外名称匹配，这也不是密码学主机认证。
 7. 原子保存 shell 确认、准备完成与 Agent 控制权。传输之后失败或崩溃保留未知准备状态，需显式接管检查后 resume；不自动重传。
-
-旧 shell-init/confirm-shell/handoff 接口保持人工安装和 expected-host 契约，供高级使用与兼容；新的准备事务不会串接三个 CLI 来模拟原子性。
 
 同一 pane 每次只能有一个有效的 shell 初始化代次。绑定及请求随机标识各使用至少 128 位随机数，以固定长度十六进制表示。初始化代码和控制标识不能当作密码使用；日志中也不应无必要地持久化它们。
 
@@ -535,7 +529,7 @@ __atb_<binding_nonce> run <request_nonce> <base64_payload>
 - 使用 node:fs/promises 的 `mkdir(lockPath, { recursive: false, mode: 0o700 })` 获取锁，EEXIST 表示资源忙；禁止“先检查不存在再创建”的竞态写法。
 - 锁按实际资源身份生成：规范化 socket、server 实例、pane ID 及 pane 进程代次，不能只按会话别名生成。相同 pane 的重复绑定默认拒绝。
 - 每次获取生成随机 owner_token，并记录主机/启动代次、PID、进程创建身份及绑定代次；owner 记录持久化完成前不得进入临界区。
-- 区分短期元数据锁和资源执行锁：bind、shell-init、confirm-shell、handoff、send、exec、recover、interrupt、stop 的元数据修改受短锁保护；写入事务还须取得资源执行锁。
+- 区分短期元数据锁和资源执行锁。绑定、准备、执行、控制请求与恢复各自按本节的锁顺序更新状态。
 - exec 的资源执行锁覆盖检查、采集就绪、发送、读取及最终记录提交全过程。短锁只覆盖一次状态读改写，不跨越终端等待。
 - 正常释放前重新核对目录身份及 owner_token，仅持有者删除自己的 owner 记录与锁目录；任何错误均不能递归删除一个未确认所有权的锁路径。
 - 资源执行锁竞争时非阻塞返回 BUSY，不自动抢占或排队重发。短期审计元数据锁允许最多 250ms 的有限重试，仅重试本地加锁，绝不重发终端请求；不依据 mtime/心跳过期接管。事件循环暂停、系统休眠与时钟变化不能使仍存活的写入者丢锁。
@@ -551,7 +545,7 @@ interrupt 通过短锁原子登记带有 request_id 和绑定代次的控制请�
 
 人工强制接管同样由执行进程先停止自动输入、记录结果不确定并释放执行锁，再完成交接。执行进程已死亡时走遗留记录恢复；仍存活但无法响应时返回明确的协调失败，保留恢复要求，不静默抢锁或杀进程。执行进程收到控制请求只在核对绑定后处理，过期代次的中断不得作用于新任务。
 
-正常使用通过 `takeover --session-id <id>` 自动定位原请求并等待执行协调者实际交回控制权；旧 `handoff --to human --takeover --request-id <id>` 仍可用。操作保留任务 unknown 与恢复要求，仅在协调完成后恢复原先可写客户端，不自动将结果改为已停止，超时不声称接管完成。
+通过 `takeover --session-id <id>` 自动定位原请求并等待执行协调者实际交回控制权。操作保留任务 unknown 与恢复要求，仅在协调完成后恢复原先可写客户端，不自动将结果改为已停止，超时不声称接管完成。
 
 所有同时需要两种锁的路径统一先取资源执行锁、再短暂取元数据锁；控制请求只取元数据锁，释放后再等待确认，避免反向持锁死锁。
 
@@ -694,7 +688,6 @@ features 表示软件已实现的能力，不表示当前会话已获授权；�
     "capture": true,
     "raw_send": true,
     "exec": true,
-    "shell_init": true,
     "directory_lock_recovery": true,
     "connect": true,
     "session_management": true,
@@ -904,7 +897,7 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 
 ### Phase 1：可安装的受控共享终端
 
-实现 doctor、capabilities、会话创建与绑定、会话查询和管理、attach/handoff、capture、显式 send 和 recover-lock。
+实现 doctor、capabilities、会话创建与绑定、会话查询和管理、attach、capture、显式 send 和 recover-lock。
 
 配置、授权范围、目录锁及遗留锁恢复、原子状态存储、错误码、数据保护和基础测试必须在本阶段实现，不能在已有写入能力后再补。
 
@@ -921,7 +914,7 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 
 ### Phase 2：受限 shell 执行与恢复
 
-实现 shell-init、confirm-shell、控制模式采集、bash-v1 协议、exec、request、recover 和显式 interrupt。
+实现自动 shell 准备与交接、控制模式采集、bash-v1 协议、exec、request、recover 和显式 interrupt。
 
 验收要求：
 
@@ -958,7 +951,7 @@ exec 同时提供 `--command-stdin`，用于避免调用方 shell 二次展开�
 | 采集 | 任意字节分片、CR 重绘、ANSI/OSC、非法 UTF-8、无换行、大输出与慢消费者 |
 | 输出归属 | 后台噪声不会被宣称为独立 stdout；截断与完成状态相互独立 |
 | 命令语义 | 非零退出、exit/exec、cd/export、末尾换行、意外请求输入、后台子进程 |
-| 并发 | 多进程、同 pane 多别名、send/exec/stop/handoff 竞争、锁初始化与释放、维护标记竞态 |
+| 并发 | 多进程、同 pane 多别名、send/exec/stop/takeover 竞争、锁初始化与释放、维护标记竞态 |
 | 目录锁恢复 | SIGKILL、owner 记录缺失、PID 复用、事件循环暂停、双恢复者、恢复进程崩溃均不得误抢活锁 |
 | 故障注入 | prepared、发送后、BEGIN 后、END 后提交前、提交后返回前分别杀死 CLI |
 | 恢复 | 重复请求、状态损坏、持久化失败、Ctrl+C、断线重登、人工接管保留未知历史 |

@@ -11,7 +11,7 @@ The TypeScript/Bun CLI and the documented Phase 1/2 execution lifecycle are impl
 | doctor / capabilities / help / version / JSON errors | CLI and packaging smoke checks; actual tmux command flags are detected and optional copy-mode support is reported separately |
 | start, explicit SSH alias, idempotent registration | [src/session.ts](src/session.ts), [session tests](tests/integration/session.test.ts); SSH is a local fake executable in the test, not a real connection |
 | bind and session management with exact identity and ownership | Session/state/tmux/identity modules; real external binding, permissions, stale/respawn and no-external-stop tests |
-| attach/handoff and original client roles | [ownership tests](tests/integration/ownership.test.ts) use real local human PTYs; initially read-only clients remain read-only |
+| ready/takeover and original client roles | [ownership tests](tests/integration/ownership.test.ts) use real local human PTYs; initially read-only clients remain read-only |
 | Bounded snapshots, selected grids, literal input | Session tests cover main/alternate/copy grids, backend capability rejection, line limits, UTF-8 and control rejection; raw writers use no-output control clients |
 | Human-installed Bash profile and endpoint confirmation | [src/shell.bash](src/shell.bash), shell initialization, real handshake/hostname mismatch and missing-helper tests |
 | Non-interactive exec and exact foreground status | [executor tests](tests/integration/executor.test.ts); merged output, exit 7, cwd/env/function isolation, piped scripts and trailing newlines |

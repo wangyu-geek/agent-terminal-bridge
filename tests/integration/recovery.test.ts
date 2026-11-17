@@ -137,19 +137,8 @@ integration(
         ),
       )
       expect(
-        (
-          await f.cli([
-            "handoff",
-            "--to",
-            "human",
-            "--takeover",
-            "--request-id",
-            "take-me",
-            "--confirm",
-            "--json",
-          ])
-        ).code,
-      ).toBe(0)
+        (await f.cli(["takeover", "--confirm", "--json"])).result,
+      ).toMatchObject({ taken_over: true, recovery_required: true })
       await owner.exited
       const result = JSON.parse(await output)
       expect(result).toMatchObject({

@@ -29,15 +29,11 @@ export const zhCN = {
   "error.choose_a_listed_session_number": "请选择列表中的会话编号",
   "error.pane_cannot_expand_a_registered_binding":
     "--pane 不能扩大已登记绑定的范围",
-  "error.confirm_shell_requires_expected_host":
-    "confirm-shell 需要 --expected-host",
   "error.provide_exactly_one_command_argument_or_command_stdin":
     "请仅提供一个命令参数或使用 --command-stdin",
   "error.requires_request_id": "{command} 需要 --request-id",
   "error.bind_requires_socket_and_pane": "bind 需要 --socket 和 --pane",
   "error.send_requires_raw_and_text": "send 需要 --raw 和 --text",
-  "error.takeover_requires_to_human_and_request_id":
-    "takeover 需要 --to human 和 --request-id",
   "error.attach_is_interactive_and_does_not_support_json":
     "attach 为交互命令，不支持 --json",
   "error.attach_requires_a_real_terminal": "attach 需要真实终端",
@@ -93,14 +89,6 @@ export const zhCN = {
   "error.the_saved_terminal_identity_changed": "已保存的终端身份发生变化",
   "error.the_saved_tmux_process_identity_changed":
     "已保存的 tmux 进程身份发生变化",
-  "error.initialization_requires_human_control": "初始化需要人工控制权",
-  "error.an_expected_hostname_is_required": "需要指定预期主机名",
-  "error.generate_and_install_shell_initialization_first":
-    "请先生成并安装 shell 初始化代码",
-  "error.reported_hostname_does_not_match_the_user_confirmed_destination":
-    "报告的主机名与用户确认的目标不匹配",
-  "error.shell_handshake_did_not_complete_inspect_the_session_and_recover":
-    "shell 握手未完成；请检查会话并恢复",
   "error.command_is_empty_contains_nul_or_exceeds_its_byte_limit":
     "命令为空、包含 NUL 或超过字节数限制",
   "error.request_id_is_already_associated_with_another_command":
@@ -228,8 +216,6 @@ export const zhCN = {
   "error.raw_input_requires_human_control": "原始输入需要人工控制权",
   "error.input_may_be_partial_inspect_the_terminal_and_explicitly_hand_control_back_to_human":
     "输入可能只发送了一部分；请检查终端并明确交回人工控制权",
-  "error.confirm_the_shell_before_handing_execution_control_to_an_agent":
-    "请先确认 shell，再将执行控制权交给 Agent",
   "error.external_panes_can_only_be_unbound": "外部 pane 仅可解除绑定",
   "error.invalid_initialization_nonce": "初始化 nonce 无效",
   "error.invalid_transfer_nonce": "传输 nonce 无效",
@@ -256,7 +242,7 @@ export const zhCN = {
   "error.session_id_must_be_the_complete_32_character_bridge_id":
     "session_id 必须为完整的 32 字符 Bridge ID",
   "error.session_id_is_missing_or_no_longer_registered_inspect_list":
-    "session_id 缺失或不再登记；请检查 list",
+    "session_id 缺失或不再登记；请检查 session list",
   "error.no_shared_session_exists_run_remote_terminal_connect_ssh_alias_in_a_real_terminal":
     "没有共享会话；请在真实终端运行 remote-terminal connect SSH_ALIAS",
   "error.multiple_sessions_exist_select_a_session_id_from_remote_terminal_list":
@@ -366,11 +352,8 @@ export const zhCN = {
   "help.command.capture": "读取终端快照",
   "help.command.send": "向终端发送原始输入",
   "help.command.attach": "附加到共享终端视图",
-  "help.command.handoff": "转移终端输入控制权",
   "help.command.stop": "停止受管理会话",
   "help.command.recover_lock": "恢复经核实的遗留锁",
-  "help.command.shell_init": "打印 shell 初始化脚本",
-  "help.command.confirm_shell": "确认目标 shell 已就绪",
   "help.command.exec": "在所选会话中执行一条命令",
   "help.command.request": "查询已有请求",
   "help.command.recover": "恢复异常结束的请求",
@@ -396,8 +379,6 @@ export const zhCN = {
   "help.flag.text": "要发送的文本",
   "help.flag.enter": "发送后追加回车",
   "help.flag.writable": "请求可写附加",
-  "help.flag.to": "控制权接收方",
-  "help.flag.takeover": "接管正在运行的前台请求",
   "help.flag.request_id": "请求标识",
   "help.flag.socket": "tmux socket 路径",
   "help.flag.permissions": "允许的操作，逗号分隔",
@@ -475,11 +456,9 @@ export const zhCN = {
     "是否将所选终端交回人工控制？这不会自动中断其中运行的程序。",
   "confirm.ready":
     "是否已完成登录和目标选择、解决先前任务，并确认所选 shell 空闲且可交给 Agent？",
-  "confirm.shell": "是否确认目标正确，且位于空白的兼容 Bash 提示符？",
   "confirm.recover": "是否确认已检查终端并解决未决命令？",
   "confirm.interrupt": "是否尝试中断指定的前台请求？",
   "confirm.bind": "是否登记此精确指定的外部 tmux pane？",
-  "confirm.handoff": "是否将控制权交给 {to}？请确认 shell 输入行为空。",
   "confirm.manage": "是否确认对已登记会话执行 {command}？",
   "error.arguments": "命令行参数无效",
   "error.local_operation": "本地操作失败",

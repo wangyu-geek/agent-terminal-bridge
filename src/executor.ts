@@ -6,7 +6,6 @@ import { digest, withLock } from "./locking.ts"
 import { type Binding, emptyShell } from "./models.ts"
 import { FrameParser } from "./protocol.ts"
 import type { Sessions } from "./session.ts"
-import { shellInitialization } from "./shell.ts"
 import { resourceKey } from "./state.ts"
 import { isPending, type Task, Tasks } from "./tasks.ts"
 import { randomNonce, Tmux } from "./tmux.ts"
@@ -29,114 +28,6 @@ export class Executor {
     readonly hooks: ExecutionHooks = {},
   ) {
     this.tasks = new Tasks(sessions.state)
-  }
-
-  async initialize(name: string) {
-    const original = await this.sessions.state.load(name)
-    return withLock(
-      this.sessions.state.locks,
-      resourceKey(original),
-      async () => {
-        const binding = await this.sessions.state.load(name)
-        this.sessions.requirePermission(binding, "exec")
-        await this.sessions.verify(binding, true)
-        await this.tasks.requireIdle(binding)
-        requireValue(
-          binding.control === "human",
-          "PERMISSION_DENIED",
-          msg("error.initialization_requires_human_control"),
-          5,
-        )
-        const nonce = randomNonce()
-        binding.shell = { ...emptyShell("pending"), nonce }
-        await this.sessions.state.save(binding)
-        await this.sessions.state.audit("shell-init", binding.id, "pending")
-        return {
-          session: name,
-          profile: "bash-v1",
-          code: shellInitialization(nonce),
-          instructions:
-            "Review and paste this code only into the selected Bash >=3.2 prompt; then confirm the expected hostname. The ready command performs automatic preparation after explicit handoff.",
-        }
-      },
-    )
-  }
-
-  async confirmShell(name: string, expectedHost: string, timeout: number) {
-    requireValue(
-      expectedHost.length > 0 &&
-        Buffer.byteLength(expectedHost) <= 255 &&
-        !expectedHost.includes("\n"),
-      "INVALID_INPUT",
-      msg("error.an_expected_hostname_is_required"),
-    )
-    const original = await this.sessions.state.load(name)
-    return withLock(
-      this.sessions.state.locks,
-      resourceKey(original),
-      async () => {
-        const binding = await this.sessions.state.load(name)
-        this.sessions.requirePermission(binding, "exec")
-        requireValue(
-          binding.control === "human" &&
-            binding.shell.state === "pending" &&
-            binding.shell.nonce,
-          "SHELL_CONFIRMATION_REQUIRED",
-          msg("error.generate_and_install_shell_initialization_first"),
-          5,
-        )
-        await this.tasks.requireIdle(binding)
-        const transaction = await this.transaction(
-          binding,
-          `probe-${randomNonce()}`,
-          "probe",
-          expectedHost,
-          timeout,
-        )
-        const probe = transaction.parser?.probe
-        if (!transaction.result.ok || !probe || probe.host !== expectedHost) {
-          if (probe && probe.host !== expectedHost) {
-            binding.shell = emptyShell("unknown")
-            binding.control = "human"
-            await this.sessions.state.save(binding)
-            throw new BridgeError(
-              "ENDPOINT_MISMATCH",
-              msg(
-                "error.reported_hostname_does_not_match_the_user_confirmed_destination",
-              ),
-              5,
-            )
-          }
-          throw new BridgeError(
-            "SHELL_CONFIRMATION_REQUIRED",
-            msg(
-              "error.shell_handshake_did_not_complete_inspect_the_session_and_recover",
-            ),
-            9,
-          )
-        }
-        binding.shell = {
-          state: "confirmed",
-          nonce: binding.shell.nonce,
-          endpoint: probe.host,
-          user: probe.user,
-          cwd: probe.cwd,
-          version: probe.bashVersion,
-        }
-        await this.sessions.state.save(binding)
-        return {
-          session: name,
-          shell: {
-            state: "confirmed",
-            profile: "bash-v1",
-            endpoint_label: probe.host,
-            endpoint_source: "user_confirmed_and_shell_reported",
-            user: probe.user,
-            cwd: probe.cwd,
-          },
-        }
-      },
-    )
   }
 
   async execute(name: string, id: string, command: string, timeout: number) {
@@ -438,7 +329,7 @@ export class Executor {
       msg("error.exec_requires_a_dedicated_single_pane_session"),
       3,
     )
-    await this.checkClients(binding, kind, preparing)
+    await this.sessions.requireReadonly(binding)
     const nonce = randomNonce()
     const line = `__atb_${binding.shell.nonce} ${kind} ${nonce}${kind === "run" ? ` ${Buffer.from(input).toString("base64")}` : ""}`
     requireValue(
@@ -541,7 +432,7 @@ export class Executor {
         }
         if (performance.now() >= nextInspection) {
           await this.sessions.verify(binding, true)
-          await this.checkClients(binding, kind, preparing)
+          await this.sessions.requireReadonly(binding)
           nextInspection = performance.now() + 200
         }
         await Bun.sleep(20)
@@ -639,15 +530,6 @@ export class Executor {
     } finally {
       await control?.close()
     }
-  }
-
-  private async checkClients(
-    binding: Binding,
-    kind: "run" | "probe",
-    preparing = false,
-  ) {
-    if (kind === "probe" && !preparing) return
-    await this.sessions.requireReadonly(binding)
   }
 }
 

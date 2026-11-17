@@ -17,13 +17,11 @@ async function fixture() {
 }
 
 integration(
-  "handoff restores only clients made writable by the Bridge's prior ownership",
+  "takeover restores only clients that were writable before ready",
   async () => {
     const f = await fixture()
     const binding = await f.bashSession()
-    expect(
-      (await f.cli(["handoff", "--to", "human", "--confirm", "--json"])).code,
-    ).toBe(0)
+    expect((await f.cli(["takeover", "--confirm", "--json"])).code).toBe(0)
     const writable = client(f, binding, false)
     const readonly = client(f, binding, true)
     try {
@@ -34,14 +32,12 @@ integration(
             (item) => !item.control,
           ).length === 2,
       )
-      await f.reinitialize()
+      await f.ready()
       const agentClients = (await tmux.clients(binding.sessionId)).filter(
         (item) => !item.control,
       )
       expect(agentClients.map((item) => item.readonly)).toEqual([true, true])
-      expect(
-        (await f.cli(["handoff", "--to", "human", "--confirm", "--json"])).code,
-      ).toBe(0)
+      expect((await f.cli(["takeover", "--confirm", "--json"])).code).toBe(0)
       const restored = (await tmux.clients(binding.sessionId)).filter(
         (item) => !item.control,
       )
@@ -112,27 +108,37 @@ integration(
   "hostname mismatch withdraws confirmation without sending the user command",
   async () => {
     const f = await fixture()
-    const binding = await f.bashSession()
-    await f.cli(["handoff", "--to", "human", "--confirm", "--json"])
-    const initialized = await f.cli(["shell-init", "--json"])
-    await f.installFixtureCode(binding, String(initialized.result.code))
+    await f.bashSession()
+    expect((await f.cli(["takeover", "--confirm", "--json"])).code).toBe(0)
     const result = await f.cli([
-      "confirm-shell",
+      "ready",
       "--expected-host",
       `${hostname()}-not-the-host`,
       "--confirm",
       "--json",
     ])
     expect(result.code).toBe(5)
-    expect(
-      (await f.cli(["session", "status", "--json"])).result.shell,
-    ).toMatchObject({
-      state: "unknown",
-      endpoint_label: null,
+    expect(result.result).toMatchObject({
+      error: { code: "ENDPOINT_MISMATCH" },
     })
-    expect(
-      (await f.cli(["handoff", "--to", "agent", "--confirm", "--json"])).code,
-    ).toBe(5)
+    expect((await f.cli(["session", "status", "--json"])).result).toMatchObject(
+      {
+        control: "recovery_required",
+        shell: { state: "unknown", endpoint_label: null },
+      },
+    )
+    const blocked = await f.cli([
+      "exec",
+      "--request-id",
+      "wrong-host",
+      "--json",
+      `printf forbidden > '${f.directory}/effect'`,
+    ])
+    expect(blocked.result).toMatchObject({
+      execution_state: "not_started",
+      error: { code: "SHELL_CONFIRMATION_REQUIRED" },
+    })
+    expect(await Bun.file(`${f.directory}/effect`).exists()).toBe(false)
   },
 )
 
